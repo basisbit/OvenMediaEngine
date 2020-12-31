@@ -7,21 +7,16 @@ services:
       dockerfile: ./Dockerfile
     ports:
     - "1935:1935/tcp"
-    - "3333:3333/tcp"
     - "8080:8080/tcp"
     - "8443:8443/tcp"
     - "9000:9000/tcp"
-    - "4000-4005:4000-4005/udp"
-    - "10006-10010:10006-10010/udp"
     environment:
     - OME_ORIGIN_PORT=9000
     - OME_RTMP_PROV_PORT=1935
     - OME_HLS_STREAM_PORT=8080
     - OME_DASH_STREAM_PORT=8080
     - TLS_HTTP_PORT=8443
-    - OME_SIGNALLING_PORT=3333
-    - OME_MPEGTS_PROV_PORT=4000-4005/udp
-    - OME_ICE_CANDIDATES=*:10006-10010/udp
+    - TLS_DOMAIN_NAME=oven.example.com
     command: /opt/ovenmediaengine/bin/OvenMediaEngine -c origin_conf
     volumes:
     - ./local-data/origin_conf:/opt/ovenmediaengine/bin/origin_conf
@@ -32,16 +27,14 @@ services:
       context: .
       dockerfile: ./Dockerfile
     ports:
-    - "3334:3334/tcp"
     - "8090:8090/tcp"
     - "8943:8943/tcp"
-    - "10000-10005:10000-10005/udp"
     environment:
-    - DEFAULT_ORIGIN_SERVER=192.168.0.199
+    - DEFAULT_ORIGIN_SERVER=origin
     - OME_HLS_STREAM_PORT=8090
     - OME_DASH_STREAM_PORT=8090
-    - OME_SIGNALLING_PORT=3334
-    - OME_ICE_CANDIDATES=*:10000-10005/udp
+    - TLS_HTTP_PORT=8943
+    - TLS_DOMAIN_NAME=oven.example.com
     command: /opt/ovenmediaengine/bin/OvenMediaEngine -c edge_conf
     volumes:
     - ./local-data/edge_conf:/opt/ovenmediaengine/bin/edge_conf

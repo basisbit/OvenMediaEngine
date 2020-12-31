@@ -9,52 +9,83 @@
 
 	<!-- Settings for the ports to bind -->
 	<Bind>
+		<!-- Enable this configuration if you want to use API Server -->
+		<!--
+		<Managers>
+			<API>
+				<Port>48081</Port>
+			</API>
+		</Managers>
+		-->
+
 		<Providers>
 			<RTMP>
-				<Port>${env:OME_RTMP_PROV_PORT:1935}</Port>
+				<Port>1935</Port>
 			</RTMP>
 			<MPEGTS>
 				<!--
-					Listen on port 4000,4001,4004,4005
+					Listen on port 4000~4005
 					This is just a demonstration to show that you can configure the port in several ways
 				-->
-				<Port>${env:OME_MPEGTS_PROV_PORT:4000-4003,4004,4005/udp}</Port>
+				<Port>4000-4004,4005/udp</Port>
 			</MPEGTS>
 		</Providers>
 
 		<Publishers>
-			<!-- The OVT is protocol for ORIGIN-EDGE -->
 			<OVT>
-				<Port>${env:OME_ORIGIN_PORT:9000}</Port>
+				<Port>9000</Port>
 			</OVT>
 			<HLS>
-				<Port>${env:OME_HLS_STREAM_PORT:8080}</Port>
+				<Port>80</Port>
 				<!-- If you want to use TLS, specify the TLS port -->
 				<!-- <TLSPort>443</TLSPort> -->
 			</HLS>
 			<DASH>
-				<Port>${env:OME_DASH_STREAM_PORT:8080}</Port>
+				<Port>80</Port>
 				<!-- If you want to use TLS, specify the TLS port -->
 				<!-- <TLSPort>443</TLSPort> -->
 			</DASH>
 			<WebRTC>
 				<Signalling>
-					<Port>${env:OME_SIGNALLING_PORT:3333}</Port>
+					<Port>3333</Port>
 					<!-- If you want to use TLS, specify the TLS port -->
 					<!-- <TLSPort>3334</TLSPort> -->
 				</Signalling>
 				<IceCandidates>
-					<IceCandidate>${env:OME_ICE_CANDIDATES:*:10006-10010/udp}</IceCandidate>
+					<IceCandidate>*:10000-10005/udp</IceCandidate>
 				</IceCandidates>
 			</WebRTC>
 		</Publishers>
 	</Bind>
 
+	<!-- P2P works only in WebRTC -->
+	<!--
+	<P2P>
+		<MaxClientPeersPerHostPeer>2</MaxClientPeersPerHostPeer>
+	</P2P>
+	-->
+
+	<!-- Enable this configuration if you want to use API Server -->
+	<!--
+	<Managers>
+		<Host>
+			<Names>
+				<Name>*</Name>
+			</Names>
+			<TLS>
+				<CertPath>/etc/ssl/cert.crt</CertPath>
+				<KeyPath>/etc/ssl/key.key</KeyPath>
+				<ChainCertPath>/etc/ssl/chain.crt</ChainCertPath>
+			</TLS>
+		</Host>
+		<API>
+			<AccessToken>ome-access-token</AccessToken>
+		</API>
+	</Managers>
+	-->
+
 	<VirtualHosts>
-		<!--
-			You can include multiple XML files by doing the following:
-			<VirtualHost include="sites-enabled/*.xml" />
-		-->
+		<!-- You can use wildcard like this to include multiple XMLs -->
 		<VirtualHost include="VHost*.xml" />
 		<VirtualHost>
 			<Name>default</Name>
@@ -66,7 +97,7 @@
 						<Name>stream1.example.com</Name>
 						<Name>stream2.example.com</Name>
 						<Name>*.sub.example.com</Name>
-						<Name>127.0.0.1</Name>
+						<Name>192.168.0.1</Name>
 					-->
 					<Name>*</Name>
 				</Names>
@@ -79,6 +110,46 @@
 				-->
 			</Host>
 
+			<!-- Refer https://airensoft.gitbook.io/ovenmediaengine/signedpolicy
+
+			<SignedPolicy>
+				<PolicyQueryKeyName>policy</PolicyQueryKeyName>
+				<SignatureQueryKeyName>signature</SignatureQueryKeyName>
+				<SecretKey>aKq#1kj</SecretKey>
+
+				<Enables>
+					<Providers>rtmp</Providers>
+					<Publishers>webrtc,hls,dash,lldash</Publishers>
+				</Enables>
+			</SignedPolicy>
+			-->
+
+			<!--
+			<Origins>
+			
+				<Origin>
+					<Location>/app/stream</Location>
+					<Pass>
+						<Scheme>ovt</Scheme>
+						<Urls><Url>origin.com:9000/app/stream_720p</Url></Urls>
+					</Pass>
+				</Origin>
+				<Origin>
+					<Location>/app/</Location>
+					<Pass>
+						<Scheme>ovt</Scheme>
+						<Urls><Url>origin.com:9000/app/</Url></Urls>
+					</Pass>
+				</Origin>
+				<Origin>
+					<Location>/edge/</Location>
+					<Pass>
+						<Scheme>ovt</Scheme>
+						<Urls><Url>origin.com:9000/app/</Url></Urls>
+					</Pass>
+				</Origin>
+			</Origins>
+			-->
 			<!-- Settings for applications -->
 			<Applications>
 				<Application>
@@ -102,13 +173,21 @@
 									<Samplerate>48000</Samplerate>
 									<Channel>2</Channel>
 								</Audio>
+								<!-- 							
+								<Video>
+									<Codec>vp8</Codec>
+									<Bitrate>1024000</Bitrate>
+									<Framerate>30</Framerate>
+									<Width>1280</Width>
+									<Height>720</Height>
+								</Video>								
+								-->
 							</Encodes>
 						</OutputProfile>
 					</OutputProfiles>
 					<Providers>
 						<OVT />
 						<RTMP />
-						<RTSPPull />
 						<MPEGTS>
 							<StreamMap>
 								<!--
@@ -125,6 +204,7 @@
 								</Stream>
 							</StreamMap>
 						</MPEGTS>
+						<RTSPPull />
 					</Providers>
 					<Publishers>
 						<SessionLoadBalancingThreadCount>8</SessionLoadBalancingThreadCount>
