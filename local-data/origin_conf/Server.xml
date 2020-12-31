@@ -84,29 +84,10 @@
 						<OVT />
 						<RTMP />
 						<RTSPPull />
-						<MPEGTS>
-							<StreamMap>
-								<!--
-									Set the stream name of the client connected to the port to "stream_${Port}"
-									For example, if a client connets to port 4000, OME creates a "stream_4000" stream
-								-->
-								<Stream>
-									<Name>stream_${Port}</Name>
-									<Port>4000,4001-4004</Port>
-								</Stream>
-								<Stream>
-									<Name>stream_4005</Name>
-									<Port>4005</Port>
-								</Stream>
-							</StreamMap>
-						</MPEGTS>
 					</Providers>
 					<Publishers>
 						<SessionLoadBalancingThreadCount>8</SessionLoadBalancingThreadCount>
 						<OVT />
-						<WebRTC>
-							<Timeout>30000</Timeout>
-						</WebRTC>
 						<HLS>
 							<SegmentDuration>5</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
