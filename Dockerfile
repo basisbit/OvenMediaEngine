@@ -197,17 +197,13 @@ RUN \
         mkdir -p ${PREFIX}/bin/edge_conf && \
         strip ./bin/RELEASE/OvenMediaEngine && \
         cp ./bin/RELEASE/OvenMediaEngine ${PREFIX}/bin/ && \
-        cp ../misc/conf_examples/Origin.xml ${PREFIX}/bin/origin_conf/Server.xml && \
-        cp ../misc/conf_examples/Logger.xml ${PREFIX}/bin/origin_conf/Logger.xml && \
-        cp ../misc/conf_examples/Edge.xml ${PREFIX}/bin/edge_conf/Server.xml && \
-        cp ../misc/conf_examples/Logger.xml ${PREFIX}/bin/edge_conf/Logger.xml && \
         rm -rf ${DIR}
 
 FROM	base AS release
-MAINTAINER  Jeheon Han <getroot@airensoft.com>
+MAINTAINER  basisbit <streaming@basisbit.de>
 
 WORKDIR         /opt/ovenmediaengine/bin
-EXPOSE          80/tcp 8080/tcp 8090/tcp 1935/tcp 3333/tcp 3334/tcp 4000-4005/udp 10000-10010/udp 9000/tcp
+EXPOSE          80/tcp 8080/tcp 8090/tcp 8443/tcp 8943/tcp 1935/tcp 3333/tcp 3334/tcp 4000-4005/udp 10000-10010/udp 9000/tcp
 COPY            --from=build /opt/ovenmediaengine /opt/ovenmediaengine
 # Default run as Origin mode
 CMD             ["/opt/ovenmediaengine/bin/OvenMediaEngine", "-c", "origin_conf"]

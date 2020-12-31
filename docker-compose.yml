@@ -4,7 +4,7 @@ services:
   origin:
     build:
       context: .
-    image: airensoft/ovenmediaengine:latest
+      dockerfile: ./Dockerfile
     ports:
     - "1935:1935/tcp"
     - "3333:3333/tcp"
@@ -18,6 +18,7 @@ services:
     - OME_RTMP_PROV_PORT=1935
     - OME_HLS_STREAM_PORT=8080
     - OME_DASH_STREAM_PORT=8080
+    - TLS_HTTP_PORT=8443
     - OME_SIGNALLING_PORT=3333
     - OME_MPEGTS_PROV_PORT=4000-4005/udp
     - OME_ICE_CANDIDATES=*:10006-10010/udp
@@ -25,12 +26,11 @@ services:
     volumes:
     - ./local-data/origin_conf:/opt/ovenmediaengine/bin/origin_conf
     - ./local-data/tls:/etc/ssl
-    - ./local-data/tls:/etc/ssl
 
   edge:
     build:
       context: .
-    image: airensoft/ovenmediaengine:latest
+      dockerfile: ./Dockerfile
     ports:
     - "3334:3334/tcp"
     - "8090:8090/tcp"
@@ -45,5 +45,4 @@ services:
     command: /opt/ovenmediaengine/bin/OvenMediaEngine -c edge_conf
     volumes:
     - ./local-data/edge_conf:/opt/ovenmediaengine/bin/edge_conf
-    - ./local-data/tls:/etc/ssl
     - ./local-data/tls:/etc/ssl
