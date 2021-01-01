@@ -7,14 +7,11 @@ services:
       dockerfile: ./Dockerfile
     ports:
     - "1935:1935/tcp"
-    - "8080:8080/tcp"
     - "8443:8443/tcp"
     - "9000:9000/tcp"
     environment:
     - OME_ORIGIN_PORT=9000
     - OME_RTMP_PROV_PORT=1935
-    - OME_HLS_STREAM_PORT=8080
-    - OME_DASH_STREAM_PORT=8080
     - TLS_HTTP_PORT=8443
     - TLS_DOMAIN_NAME=oven.example.com
     command: /opt/ovenmediaengine/bin/OvenMediaEngine -c origin_conf
@@ -29,8 +26,10 @@ services:
     ports:
     - "8090:8090/tcp"
     - "8943:8943/tcp"
+    - "9001:9001/tcp"
     environment:
-    - DEFAULT_ORIGIN_SERVER=origin
+    - DEFAULT_ORIGIN_SERVER=oven.example.com
+    - DEFAULT_ORIGIN_PORT=9000
     - OME_HLS_STREAM_PORT=8090
     - OME_DASH_STREAM_PORT=8090
     - TLS_HTTP_PORT=8943

@@ -26,13 +26,9 @@
 
 		<Publishers>
 			<HLS>
-				<Port>${env:OME_HLS_STREAM_PORT:8090}</Port>
-				<!-- If you want to use TLS, specify the TLS port -->
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</HLS>
 			<DASH>
-				<Port>${env:OME_DASH_STREAM_PORT:8090}</Port>
-				<!-- If you want to use TLS, specify the TLS port -->
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</DASH>
 		</Publishers>
@@ -87,7 +83,7 @@
 					<Pass>
 						<Scheme>ovt</Scheme>
 						<Urls>
-							<Url>origin.com:9000/app/</Url>
+							<Url>${env:DEFAULT_ORIGIN_SERVER:}:${env:DEFAULT_ORIGIN_PORT:9000}/app/</Url>
 						</Urls>
 					</Pass>
 				</Origin>

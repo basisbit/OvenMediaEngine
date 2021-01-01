@@ -20,16 +20,6 @@
 			<OVT>
 				<Port>${env:OME_ORIGIN_PORT:9000}</Port>
 			</OVT>
-			<HLS>
-				<Port>${env:OME_HLS_STREAM_PORT:8080}</Port>
-				<!-- If you want to use TLS, specify the TLS port -->
-				<TLSPort>${env:TLS_HTTP_PORT:8443}</TLSPort>
-			</HLS>
-			<DASH>
-				<Port>${env:OME_DASH_STREAM_PORT:8080}</Port>
-				<!-- If you want to use TLS, specify the TLS port -->
-				<TLSPort>${env:TLS_HTTP_PORT:8443}</TLSPort>
-			</DASH>
 		</Publishers>
 	</Bind>
 
@@ -71,43 +61,24 @@
 								<Video>
 									<Bypass>true</Bypass>
 								</Video>
+								<!--
 								<Audio>
 									<Codec>opus</Codec>
 									<Bitrate>128000</Bitrate>
 									<Samplerate>48000</Samplerate>
 									<Channel>2</Channel>
 								</Audio>
+								-->
 							</Encodes>
 						</OutputProfile>
 					</OutputProfiles>
 					<Providers>
-						<OVT />
 						<RTMP />
 						<RTSPPull />
 					</Providers>
 					<Publishers>
 						<SessionLoadBalancingThreadCount>8</SessionLoadBalancingThreadCount>
 						<OVT />
-						<HLS>
-							<SegmentDuration>5</SegmentDuration>
-							<SegmentCount>3</SegmentCount>
-							<CrossDomains>
-								<Url>*</Url>
-							</CrossDomains>
-						</HLS>
-						<DASH>
-							<SegmentDuration>5</SegmentDuration>
-							<SegmentCount>3</SegmentCount>
-							<CrossDomains>
-								<Url>*</Url>
-							</CrossDomains>
-						</DASH>
-						<LLDASH>
-							<SegmentDuration>5</SegmentDuration>
-							<CrossDomains>
-								<Url>*</Url>
-							</CrossDomains>
-						</LLDASH>
 					</Publishers>
 				</Application>
 			</Applications>
