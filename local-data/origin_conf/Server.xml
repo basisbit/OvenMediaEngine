@@ -2,13 +2,19 @@
 
 <Server version="8">
 	<Name>OvenMediaEngine</Name>
-	<!-- Host type (origin/edge) -->
 	<Type>origin</Type>
-	<!-- Specify IP address to bind (* means all IPs) -->
 	<IP>*</IP>
 
 	<!-- Settings for the ports to bind -->
 	<Bind>
+		<!-- Enable this configuration if you want to use API Server -->
+		<!--
+		<Managers>
+			<API>
+				<Port>48081</Port>
+			</API>
+		</Managers>
+		-->
 		<Providers>
 			<RTMP>
 				<Port>${env:OME_RTMP_PROV_PORT:1935}</Port>
@@ -18,7 +24,7 @@
 		<Publishers>
 			<!-- The OVT is protocol for ORIGIN-EDGE -->
 			<OVT>
-				<Port>${env:OME_ORIGIN_PORT:9000}</Port>
+				<Port>${env:OVT_ORIGIN_PORT:9000}</Port>
 			</OVT>
 		</Publishers>
 	</Bind>
@@ -43,13 +49,29 @@
 					<!-- <ChainCertPath>/etc/ssl/chain.crt</ChainCertPath> -->
 				</TLS>
 			</Host>
+			
+			<!-- Refer https://airensoft.gitbook.io/ovenmediaengine/signedpolicy
+
+			<SignedPolicy>
+				<PolicyQueryKeyName>${env:SIGNED_POLICY_POLICY_QUERY_KEY:policy}</PolicyQueryKeyName>
+				<SignatureQueryKeyName>${env:SIGNED_POLICY_SIGNATURE_QUERY_KEY:signature}</SignatureQueryKeyName>
+				<SecretKey>${env:SIGNED_URL_CRYPTO_KEY:aKq#1kj}</SecretKey>
+
+				<Enables>
+					<Providers>rtmp</Providers>
+					<Publishers>ovt</Publishers>
+				</Enables>
+			</SignedPolicy>
+			-->
 
 			<!-- Settings for applications -->
 			<Applications>
 				<Application>
 					<Name>app</Name>
-					<!-- Application type (live/vod) -->
 					<Type>live</Type>
+					<Providers>
+						<RTMP />
+					</Providers>
 					<OutputProfiles>
 						<OutputProfile>
 							<Name>bypass_stream</Name>
@@ -61,23 +83,12 @@
 								<Video>
 									<Bypass>true</Bypass>
 								</Video>
-								<!--
-								<Audio>
-									<Codec>opus</Codec>
-									<Bitrate>128000</Bitrate>
-									<Samplerate>48000</Samplerate>
-									<Channel>2</Channel>
-								</Audio>
-								-->
 							</Encodes>
 						</OutputProfile>
 					</OutputProfiles>
-					<Providers>
-						<RTMP />
-						<RTSPPull />
-					</Providers>
 					<Publishers>
-						<SessionLoadBalancingThreadCount>8</SessionLoadBalancingThreadCount>
+						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:2}</SessionLoadBalancingThreadCount>
+						<StreamLoadBalancingThreadCount>${env:CPU_CORES_COUNT:2}</StreamLoadBalancingThreadCount>
 						<OVT />
 					</Publishers>
 				</Application>

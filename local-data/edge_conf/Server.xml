@@ -2,21 +2,11 @@
 
 <Server version="8">
 	<Name>OvenMediaEngine</Name>
-	<!-- Host type (origin/edge) -->
 	<Type>edge</Type>
-	<!-- Specify IP address to bind (* means all IPs) -->
 	<IP>*</IP>
 
 	<!-- Settings for the ports to bind -->
 	<Bind>
-		<!-- Enable this configuration if you want to use API Server -->
-		<!--
-		<Managers>
-			<API>
-				<Port>48081</Port>
-			</API>
-		</Managers>
-		-->
 		<Providers>
 			<!-- Currently, OME doesn't support using the specified port for OVT Provider -->
 			<OVT>
@@ -35,7 +25,6 @@
 	</Bind>
 
 	<VirtualHosts>
-		<!-- You can use wildcard like this to include multiple XMLs -->
 		<VirtualHost include="VHost*.xml" />
 		<VirtualHost>
 			<Name>default</Name>
@@ -52,19 +41,6 @@
 				</TLS>
 			</Host>
 			
-			<!-- Refer https://airensoft.gitbook.io/ovenmediaengine/signedpolicy
-
-			<SignedPolicy>
-				<PolicyQueryKeyName>${env:SIGNED_POLICY_POLICY_QUERY_KEY:policy}</PolicyQueryKeyName>
-				<SignatureQueryKeyName>${env:SIGNED_POLICY_SIGNATURE_QUERY_KEY:signature}</SignatureQueryKeyName>
-				<SecretKey>${env:SIGNED_URL_CRYPTO_KEY:aKq#1kj}</SecretKey>
-
-				<Enables>
-					<Providers>rtmp</Providers>
-					<Publishers>webrtc,hls,dash,lldash</Publishers>
-				</Enables>
-			</SignedPolicy>
-			-->
 
 			<!-- Settings for ProxyPass (It can specify origin for each path) -->
 			<Origins>
@@ -78,22 +54,13 @@
 						</Urls>
 					</Pass>
 				</Origin>
+				-->
 				<Origin>
 					<Location>/app/</Location>
 					<Pass>
-						<Scheme>ovt</Scheme>
+						<Scheme>OVT</Scheme>
 						<Urls>
-							<Url>${env:DEFAULT_ORIGIN_SERVER:}:${env:DEFAULT_ORIGIN_PORT:9000}/app/</Url>
-						</Urls>
-					</Pass>
-				</Origin>
-				-->
-				<Origin>
-					<Location>/</Location>
-					<Pass>
-						<Scheme>ovt</Scheme>
-						<Urls>
-							<Url>${env:DEFAULT_ORIGIN_SERVER:}:${env:DEFAULT_ORIGIN_PORT:9000}/</Url>
+							<Url>${env:OVT_ORIGIN_SERVER:}:${env:OVT_ORIGIN_PORT:9000}/app/</Url>
 						</Urls>
 					</Pass>
 				</Origin>
@@ -101,8 +68,10 @@
 			<Applications>
 				<Application>
 					<Name>app</Name>
-					<!-- Application type (live/vod) -->
 					<Type>live</Type>
+					<Providers>
+						<OVT />
+					</Providers>
 					<OutputProfiles>
 						<OutputProfile>
 							<Name>bypass_stream</Name>
@@ -114,22 +83,12 @@
 								<Video>
 									<Bypass>true</Bypass>
 								</Video>
-								<!--
-								<Audio>
-									<Codec>opus</Codec>
-									<Bitrate>128000</Bitrate>
-									<Samplerate>48000</Samplerate>
-									<Channel>2</Channel>
-								</Audio>
-								-->
 							</Encodes>
 						</OutputProfile>
 					</OutputProfiles>
-					<Providers>
-						<OVT />
-					</Providers>
 					<Publishers>
-						<SessionLoadBalancingThreadCount>8</SessionLoadBalancingThreadCount>
+						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:4}</SessionLoadBalancingThreadCount>
+						<StreamLoadBalancingThreadCount>2</StreamLoadBalancingThreadCount>
 						<HLS>
 							<SegmentDuration>5</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
