@@ -75,10 +75,16 @@ bool WebRtcPublisher::Start()
 
 	bool result = true;
 
-	_ice_port = IcePortManager::GetInstance()->CreatePort(webrtc_bind_config.GetIceCandidates(), IcePortObserver::GetSharedPtr());
+	_ice_port = IcePortManager::GetInstance()->CreatePort(IcePortObserver::GetSharedPtr());
 	if (_ice_port == nullptr)
 	{
-		logte("Cannot initialize ICE Port. Check your ICE configuration");
+		logte("Could not initialize ICE Port. Check your ICE configuration");
+		result = false;
+	}
+
+	if(IcePortManager::GetInstance()->CreateIceCandidates(_ice_port, webrtc_bind_config.GetIceCandidates()) == false)
+	{
+		logte("Could not create ICE Candidates. Check your ICE configuration");
 		result = false;
 	}
 
@@ -339,6 +345,13 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 
 	if (stream == nullptr)
 	{
+		logte("Cannot find stream (%s/%s)", vhost_app_name.CStr(), stream_name.CStr());
+		return nullptr;
+	}
+
+	if(stream->WaitUntilStart(3000) == false)
+	{
+		logtw("(%s/%s) stream has not started.", vhost_app_name.CStr(), stream_name.CStr());
 		return nullptr;
 	}
 
@@ -491,7 +504,7 @@ bool WebRtcPublisher::OnStopCommand(const std::shared_ptr<WebSocketClient> &ws_c
 									const std::shared_ptr<const SessionDescription> &offer_sdp,
 									const std::shared_ptr<const SessionDescription> &peer_sdp)
 {
-	logtd("Stop commnad received : %s/%s/%u", vhost_app_name.CStr(), stream_name.CStr(), offer_sdp->GetSessionId());
+	logti("Stop commnad received : %s/%s/%u", vhost_app_name.CStr(), stream_name.CStr(), offer_sdp->GetSessionId());
 	// Find Stream
 	auto stream = std::static_pointer_cast<RtcStream>(GetStream(vhost_app_name, stream_name));
 	if (!stream)
@@ -574,6 +587,7 @@ void WebRtcPublisher::OnStateChanged(IcePort &port, const std::shared_ptr<info::
 		case IcePortConnectionState::Disconnected:
 		case IcePortConnectionState::Closed:
 		{
+			logti("IcePort is disconnected. : (%s/%s/%u) reason(%d)", stream->GetApplicationName(), stream->GetName().CStr(), session->GetId(), state);
 			DisconnectSessionInternal(session);
 			break;
 		}

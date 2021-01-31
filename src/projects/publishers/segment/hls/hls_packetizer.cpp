@@ -20,13 +20,13 @@
 #include "hls_private.h"
 
 HlsPacketizer::HlsPacketizer(const ov::String &app_name, const ov::String &stream_name,
-							 const ov::String &segment_prefix,
 							 uint32_t segment_count, uint32_t segment_duration,
-							 const std::shared_ptr<MediaTrack> &video_track, const std::shared_ptr<MediaTrack> &audio_track)
+							 const std::shared_ptr<MediaTrack> &video_track, const std::shared_ptr<MediaTrack> &audio_track,
+							 const std::shared_ptr<ChunkedTransferInterface> &chunked_transfer)
 	: Packetizer(app_name, stream_name,
-				 segment_prefix,
 				 segment_count, segment_duration,
-				 video_track, audio_track),
+				 video_track, audio_track,
+				 chunked_transfer),
 
 	  _ts_writer(Writer::Type::MpegTs)
 {
@@ -238,7 +238,10 @@ bool HlsPacketizer::AppendAudioFrame(const std::shared_ptr<const MediaPacket> &m
 		if (duration >= _ideal_duration_for_audio)
 		{
 			// Writing a segment is done only on the video side
-			// result = WriteSegment(first_pts, first_pts * _audio_timebase_expr_ms, duration, duration * _audio_timebase_expr_ms);
+			if (_video_enable == false)
+			{
+				result = WriteSegment(first_pts, first_pts * _audio_timebase_expr_ms, duration, duration * _audio_timebase_expr_ms);
+			}
 		}
 	}
 
