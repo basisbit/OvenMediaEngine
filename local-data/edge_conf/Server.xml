@@ -90,14 +90,14 @@
 						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:4}</SessionLoadBalancingThreadCount>
 						<StreamLoadBalancingThreadCount>2</StreamLoadBalancingThreadCount>
 						<HLS>
-							<SegmentDuration>5</SegmentDuration>
+							<SegmentDuration>2</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
 							<CrossDomains>
 								<Url>*</Url>
 							</CrossDomains>
 						</HLS>
 						<DASH>
-							<SegmentDuration>5</SegmentDuration>
+							<SegmentDuration>2</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
 							<CrossDomains>
 								<Url>*</Url>
