@@ -220,7 +220,7 @@ bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &clie
 		if(connetion == HttpConnection::KeepAlive)
 		{
 			response->SetHeader("Connection", "Keep-Alive");
-			response->Setheader("Keep-Alive", "timeout=5, max=1000");
+			response->SetHeader("Keep-Alive", "timeout=5, max=1000");
 		}
 
 		// Check crossdomains
