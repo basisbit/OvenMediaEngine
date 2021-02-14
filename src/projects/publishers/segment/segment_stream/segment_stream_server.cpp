@@ -204,7 +204,7 @@ bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &clie
 {
 	auto response = client->GetResponse();
 	auto request = client->GetRequest();
-	HttpConnection connetion = HttpConnection::KeepAlive;
+	HttpConnection connetion = HttpConnection::Closed;
 
 	do
 	{
@@ -216,12 +216,6 @@ bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &clie
 		// Set default headers
 		response->SetHeader("Server", "OvenMediaEngine");
 		response->SetHeader("Content-Type", "text/html");
-		
-		if(connetion == HttpConnection::KeepAlive)
-		{
-			response->SetHeader("Connection", "Keep-Alive");
-			response->Setheader("Keep-Alive", "timeout=5, max=1000");
-		}
 
 		// Check crossdomains
 		if (request_target.IndexOf("crossdomain.xml") >= 0)
