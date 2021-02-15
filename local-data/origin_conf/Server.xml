@@ -67,7 +67,7 @@
 			<!-- Settings for applications -->
 			<Applications>
 				<Application>
-					<Name>app</Name>
+					<Name>source</Name>
 					<Type>live</Type>
 					<Providers>
 						<RTMP />

@@ -56,18 +56,18 @@
 				</Origin>
 				-->
 				<Origin>
-					<Location>/app/</Location>
+					<Location>/ponystream/</Location>
 					<Pass>
 						<Scheme>OVT</Scheme>
 						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER:}:${env:OVT_ORIGIN_PORT:9000}/app/</Url>
+							<Url>${env:OVT_ORIGIN_SERVER:}:${env:OVT_ORIGIN_PORT:9000}/source/</Url>
 						</Urls>
 					</Pass>
 				</Origin>
 			</Origins>
 			<Applications>
 				<Application>
-					<Name>app</Name>
+					<Name>ponystream</Name>
 					<Type>live</Type>
 					<Providers>
 						<OVT />
@@ -96,19 +96,6 @@
 								<Url>*</Url>
 							</CrossDomains>
 						</HLS>
-						<DASH>
-							<SegmentDuration>2</SegmentDuration>
-							<SegmentCount>3</SegmentCount>
-							<CrossDomains>
-								<Url>*</Url>
-							</CrossDomains>
-						</DASH>
-						<LLDASH>
-							<SegmentDuration>5</SegmentDuration>
-							<CrossDomains>
-								<Url>*</Url>
-							</CrossDomains>
-						</LLDASH>
 					</Publishers>
 				</Application>
 			</Applications>
