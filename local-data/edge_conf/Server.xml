@@ -18,9 +18,6 @@
 			<HLS>
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</HLS>
-			<DASH>
-				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
-			</DASH>
 		</Publishers>
 	</Bind>
 
@@ -90,10 +87,12 @@
 						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:4}</SessionLoadBalancingThreadCount>
 						<StreamLoadBalancingThreadCount>2</StreamLoadBalancingThreadCount>
 						<HLS>
-							<SegmentDuration>2</SegmentDuration>
+							<SegmentDuration>5</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
 							<CrossDomains>
-								<Url>*</Url>
+								<Url>*.brony.eu</Url>
+								<Url>*.pony.town</Url>
+								<Url>pony.town</Url>
 							</CrossDomains>
 						</HLS>
 					</Publishers>
