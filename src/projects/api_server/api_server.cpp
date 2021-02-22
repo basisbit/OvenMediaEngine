@@ -90,7 +90,12 @@ namespace api
 		if (http_server_result && https_server_result)
 		{
 			// Everything is OK
-			logti("API Server is listening on %s", address.ToString().CStr());
+			logti("API Server is listening on %s%s%s%s...",
+				  (_http_server != nullptr) ? address.ToString().CStr() : "",
+				  ((_http_server != nullptr) && (_https_server != nullptr)) ? ", " : "",
+				  (_https_server != nullptr) ? "TLS: " : "",
+				  (_https_server != nullptr) ? tls_address.ToString().CStr() : "");
+
 			return true;
 		}
 
@@ -106,7 +111,7 @@ namespace api
 		auto http_interceptor = std::make_shared<HttpDefaultInterceptor>();
 
 		// Request Handlers will be added to http_interceptor
-		_root_controller = std::make_shared<RootController>();
+		_root_controller = std::make_shared<RootController>(_access_token);
 		_root_controller->SetInterceptor(http_interceptor);
 		_root_controller->PrepareHandlers();
 
@@ -120,14 +125,10 @@ namespace api
 		std::shared_ptr<HttpServer> http_server = std::move(_http_server);
 		std::shared_ptr<HttpsServer> https_server = std::move(_https_server);
 
-		bool http_result = (http_server != nullptr) ? manager->ReleaseServer(http_server) : false;
-		bool https_result = (https_server != nullptr) ? manager->ReleaseServer(https_server) : false;
+		bool http_result = (http_server != nullptr) ? manager->ReleaseServer(http_server) : true;
+		bool https_result = (https_server != nullptr) ? manager->ReleaseServer(https_server) : true;
 
 		return http_result && https_result;
 	}
 
-	void Server::RegisterHandlers()
-	{
-		// _handler_list.push_back();
-	}
 }  // namespace api

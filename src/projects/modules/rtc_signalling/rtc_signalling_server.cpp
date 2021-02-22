@@ -11,8 +11,9 @@
 
 #include <config/config_manager.h>
 #include <modules/ice/ice.h>
+#include <modules/ice/ice_port.h>
+#include <modules/address/address_utilities.h>
 #include <publishers/webrtc/webrtc_publisher.h>
-
 #include <utility>
 
 #include "rtc_ice_candidate.h"
@@ -48,12 +49,57 @@ bool RtcSignallingServer::Start(const ov::SocketAddress *address, const ov::Sock
 
 	if (result)
 	{
-		auto &ice_servers_config = webrtc_config.GetIceServers();
+		_ice_servers = Json::arrayValue;
 
+		// for internal turn/tcp relay configuration
+		bool tcp_relay_parsed = false;
+		auto tcp_relay_address = webrtc_config.GetIceCandidates().GetTcpRelay(&tcp_relay_parsed);
+		if (tcp_relay_parsed)
+		{
+			Json::Value ice_server = Json::objectValue;
+			Json::Value urls = Json::arrayValue;
+
+			// <TcpRelay>IP:Port</TcpRelay>
+			// <TcpRelay>*:Port</TcpRelay>
+			// <TcpRelay>${PublicIP}:Port</TcpRelay>
+			// Check tcp_relay_address is * or ${PublicIP}
+			auto address_items = tcp_relay_address.Split(":");
+			if(address_items.size() != 2)
+			{
+				
+			}
+
+			if(address_items[0] == "*")
+			{
+				auto ip_list = ov::AddressUtilities::GetInstance()->GetIpList();
+				for(const auto& ip : ip_list)
+				{
+					urls.append(ov::String::FormatString("turn:%s:%s?transport=tcp", ip.CStr(), address_items[1].CStr()).CStr());
+				}
+			}
+			else if(address_items[0].UpperCaseString() == "${PublicIP}")
+			{
+				auto public_ip = ov::AddressUtilities::GetInstance()->GetMappedAddress();
+				urls.append(ov::String::FormatString("turn:%s:%s?transport=tcp", public_ip->GetIpAddress().CStr(), address_items[1].CStr()).CStr());
+			}
+			else
+			{
+				urls.append(ov::String::FormatString("turn:%s?transport=tcp", tcp_relay_address.CStr()).CStr());
+			}
+
+			ice_server["urls"] = urls;
+
+			// Embedded turn server has fixed user_name and credential. Security is provided by signed policy after this. This is because the embedded turn server does not relay other servers and only transmits the local stream to tcp when transmitting to webrtc.
+			ice_server["user_name"] = DEFAULT_RELAY_USERNAME;
+			ice_server["credential"] = DEFAULT_RELAY_KEY;
+
+			_ice_servers.append(ice_server);
+		}
+
+		// for external ice server configuration
+		auto &ice_servers_config = webrtc_config.GetIceServers();
 		if (ice_servers_config.IsParsed())
 		{
-			_ice_servers = Json::arrayValue;
-
 			for (auto ice_server_config : ice_servers_config.GetIceServerList())
 			{
 				Json::Value ice_server = Json::objectValue;
@@ -89,7 +135,8 @@ bool RtcSignallingServer::Start(const ov::SocketAddress *address, const ov::Sock
 				_ice_servers.append(ice_server);
 			}
 		}
-		else
+		
+		if(_ice_servers.size() == 0)
 		{
 			_ice_servers = Json::nullValue;
 		}
@@ -197,14 +244,15 @@ std::shared_ptr<WebSocketInterceptor> RtcSignallingServer::CreateWebSocketInterc
 				return HttpInterceptorResult::Disconnect;
 			}
 
-			// TODO(dimiden): 이렇게 호출하면 "command": null 이 추가되어버림. 개선 필요
-			Json::Value &command_value = object.GetJsonValue()["command"];
+			auto &payload = object.GetJsonValue();
 
-			if (command_value.isNull())
+			if ((payload.isObject() == false) || (payload.isMember("command") == false))
 			{
 				logtw("Invalid request message from %s", ws_client->ToString().CStr());
 				return HttpInterceptorResult::Disconnect;
 			}
+
+			auto &command_value = payload["command"];
 
 			ov::String command = ov::Converter::ToString(command_value);
 
@@ -476,10 +524,11 @@ std::shared_ptr<ov::Error> RtcSignallingServer::DispatchRequestOffer(const std::
 			logtd("peer %s became a host peer because there is no p2p host for client %s.", peer_info->ToString().CStr(), ws_client->ToString().CStr());
 		}
 
+		bool tcp_relay = false;
 		// None of the hosts can accept this client, so the peer will be connectioned to OME
-		std::find_if(_observers.begin(), _observers.end(), [ws_client, info, &sdp, vhost_app_name, stream_name](auto &observer) -> bool {
+		std::find_if(_observers.begin(), _observers.end(), [ws_client, info, &sdp, vhost_app_name, stream_name, &tcp_relay](auto &observer) -> bool {
 			// Ask observer to fill local_candidates
-			sdp = observer->OnRequestOffer(ws_client, vhost_app_name, info->host_name, stream_name, &(info->local_candidates));
+			sdp = observer->OnRequestOffer(ws_client, vhost_app_name, info->host_name, stream_name, &(info->local_candidates), tcp_relay);
 			return sdp != nullptr;
 		});
 
@@ -547,7 +596,7 @@ std::shared_ptr<ov::Error> RtcSignallingServer::DispatchRequestOffer(const std::
 				}
 				value["candidates"] = candidates;
 				value["code"] = static_cast<int>(HttpStatusCode::OK);
-				if(_ice_servers.isNull() == false)
+				if (tcp_relay == true && _ice_servers.isNull() == false)
 				{
 					value["ice_servers"] = _ice_servers;
 				}

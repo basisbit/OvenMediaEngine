@@ -7,14 +7,15 @@
 //
 //==============================================================================
 #include "http_response.h"
-#include "http_client.h"
-#include "http_private.h"
+
+#include <base/ovsocket/ovsocket.h>
 
 #include <algorithm>
 #include <memory>
 #include <utility>
 
-#include <base/ovsocket/ovsocket.h>
+#include "http_client.h"
+#include "http_private.h"
 
 HttpResponse::HttpResponse(const std::shared_ptr<ov::ClientSocket> &client_socket)
 	: _client_socket(client_socket)
@@ -76,8 +77,10 @@ bool HttpResponse::AppendData(const std::shared_ptr<const ov::Data> &data)
 
 	std::lock_guard<decltype(_response_mutex)> lock(_response_mutex);
 
-	_response_data_list.push_back(data);
-	_response_data_size += data->GetLength();
+	auto cloned_data = data->Clone();
+
+	_response_data_list.push_back(cloned_data);
+	_response_data_size += cloned_data->GetLength();
 
 	return true;
 }
@@ -163,7 +166,7 @@ bool HttpResponse::Send(const std::shared_ptr<const ov::Data> &data)
 
 	if (_tls_data == nullptr)
 	{
-		send_data = data;
+		send_data = data->Clone();
 	}
 	else
 	{

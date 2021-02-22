@@ -248,7 +248,7 @@ namespace ov
 
 		va_start(list, format);
 
-		appended_length = AppendVFormat(format, &(list[0]));
+		appended_length = AppendVFormat(format, list);
 
 		va_end(list);
 
@@ -261,7 +261,7 @@ namespace ov
 
 		va_copy(list_for_count, list);
 
-		int result = ::vsnprintf(nullptr, 0, format, &(list_for_count[0]));
+		int result = ::vsnprintf(nullptr, 0, format, list_for_count);
 
 		if(result < 0)
 		{
@@ -295,7 +295,7 @@ namespace ov
 
 		va_start(list, format);
 
-		VFormat(format, &(list[0]));
+		VFormat(format, list);
 
 		va_end(list);
 
@@ -321,7 +321,7 @@ namespace ov
 
 		if(Alloc(length))
 		{
-			va_copy(list, &(list_for_count[0]));
+			va_copy(list, list_for_count);
 
 			::vsnprintf(_buffer, length + 1, format, list);
 			_length = length;
@@ -337,7 +337,7 @@ namespace ov
 
 		va_start(list, format);
 
-		buffer.VFormat(format, &(list[0]));
+		buffer.VFormat(format, list);
 
 		va_end(list);
 
@@ -760,13 +760,18 @@ namespace ov
 			return true;
 		}
 
-		// 위에서 두 값을 비교하기 때문에 여기서 둘 다 nullptr 경우는 없음
+		// Because we compare the two values above to see if they are the same, none of them are nullptr here.
 		if((str._buffer == nullptr) || (_buffer == nullptr))
 		{
 			return false;
 		}
 
-		if(::strcmp(_buffer, str._buffer) == 0)
+		if (str._length != _length)
+		{
+			return false;
+		}
+
+		if(::strncmp(_buffer, str._buffer, _length) == 0)
 		{
 			return true;
 		}
@@ -796,7 +801,7 @@ namespace ov
 			return false;
 		}
 
-		if(::strcmp(_buffer, buffer) == 0)
+		if(::strncmp(_buffer, buffer, _length) == 0)
 		{
 			return true;
 		}

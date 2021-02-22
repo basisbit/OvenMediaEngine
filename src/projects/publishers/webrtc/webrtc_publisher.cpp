@@ -87,6 +87,25 @@ bool WebRtcPublisher::Start()
 		logte("Could not create ICE Candidates. Check your ICE configuration");
 		result = false;
 	}
+	
+	bool tcp_relay_parsed = false;
+	auto tcp_relay = webrtc_bind_config.GetIceCandidates().GetTcpRelay(&tcp_relay_parsed);
+	if(tcp_relay_parsed)
+	{
+		auto items = tcp_relay.Split(":");
+		if(items.size() != 2)
+		{
+			logte("TcpRelay format is incorrect : <Relay IP>:<Port>");
+		}
+		else
+		{
+			if(IcePortManager::GetInstance()->CreateTurnServer(_ice_port, std::atoi(items[1]), ov::SocketType::Tcp) == false)
+			{
+				logte("Could not create Turn Server. Check your configuration");
+				result = false;
+			}
+		}
+	}
 
 	if (result)
 	{
@@ -273,7 +292,7 @@ bool WebRtcPublisher::OnDeletePublisherApplication(const std::shared_ptr<pub::Ap
 // Called when receives request offer sdp from client
 std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const std::shared_ptr<WebSocketClient> &ws_client,
 																		  const info::VHostAppName &vhost_app_name, const ov::String &host_name, const ov::String &stream_name,
-																		  std::vector<RtcIceCandidate> *ice_candidates)
+																		  std::vector<RtcIceCandidate> *ice_candidates, bool &tcp_relay)
 {
 	[[maybe_unused]] RequestStreamResult result = RequestStreamResult::init;
 	auto request = ws_client->GetClient()->GetRequest();
@@ -353,6 +372,12 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 	{
 		logtw("(%s/%s) stream has not started.", vhost_app_name.CStr(), stream_name.CStr());
 		return nullptr;
+	}
+
+	auto transport = parsed_url->GetQueryValue("transport");
+	if(transport.UpperCaseString() == "TCP")
+	{
+		tcp_relay = true;
 	}
 
 	auto &candidates = _ice_port->GetIceCandidateList();

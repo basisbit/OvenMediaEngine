@@ -50,12 +50,27 @@ namespace pvd
 			_curr_url = _url_list[0];
 			SetMediaSource(_curr_url->ToUrlString(true));
 		}
+
+		logtd("OvtStream Created : %d", GetId());
 	}
 
 	OvtStream::~OvtStream()
 	{
 		Stop();
 		_client_socket.Close();
+		ReleasePacketizer();
+
+		logtd("OvtStream Terminated : %d", GetId());
+	}
+
+	void OvtStream::ReleasePacketizer()
+	{
+		std::lock_guard<std::shared_mutex> mlock(_packetizer_lock);
+		if(_packetizer != nullptr)
+		{
+			_packetizer->Release();
+			_packetizer.reset();
+		}
 	}
 
 	bool OvtStream::Start()
@@ -66,6 +81,7 @@ namespace pvd
 		auto begin = std::chrono::steady_clock::now();
 		if (!ConnectOrigin())
 		{
+			ReleasePacketizer();
 			return false;
 		}
 
@@ -76,6 +92,7 @@ namespace pvd
 		begin = std::chrono::steady_clock::now();
 		if (!RequestDescribe())
 		{
+			ReleasePacketizer();
 			return false;
 		}
 
@@ -120,6 +137,8 @@ namespace pvd
 		{
 			SetState(State::STOPPED);
 		}
+
+		ReleasePacketizer();
 	
 		return pvd::PullStream::Stop();
 	}
@@ -153,12 +172,12 @@ namespace pvd
 			return false;
 		}
 
-		struct timeval tv = {5, 0};
+		struct timeval tv = {1, 500000}; // 1.5 sec
 		_client_socket.SetRecvTimeout(tv);
 
 		ov::SocketAddress socket_address(_curr_url->Host(), _curr_url->Port());
 
-		auto error = _client_socket.Connect(socket_address, 1000);
+		auto error = _client_socket.Connect(socket_address, 1500);
 		if (error != nullptr)
 		{
 			_state = State::ERROR;
@@ -186,6 +205,8 @@ namespace pvd
 		root["target"] = _curr_url->Source().CStr();
 
 		auto message = ov::Json::Stringify(root).ToData(false);
+
+		std::shared_lock<std::shared_mutex> lock(_packetizer_lock);
 		if(_packetizer->PacketizeMessage(OVT_PAYLOAD_TYPE_MESSAGE_REQUEST, ov::Clock::NowMSec(), message) == false)
 		{
 			return false;
@@ -362,6 +383,7 @@ namespace pvd
 
 		auto message = ov::Json::Stringify(root).ToData(false);
 
+		std::shared_lock<std::shared_mutex> lock(_packetizer_lock);
 		if(_packetizer->PacketizeMessage(OVT_PAYLOAD_TYPE_MESSAGE_REQUEST, ov::Clock::NowMSec(), message) == false)
 		{
 			logte("%s/%s(%u) - Could not request to play. Socket send error", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId());
@@ -445,6 +467,8 @@ namespace pvd
 		root["target"] = _curr_url->Source().CStr();
 
 		auto message = ov::Json::Stringify(root).ToData(false);
+
+		std::shared_lock<std::shared_mutex> lock(_packetizer_lock);
 		if(_packetizer->PacketizeMessage(OVT_PAYLOAD_TYPE_MESSAGE_REQUEST, ov::Clock::NowMSec(), message) == false)
 		{
 			return false;
