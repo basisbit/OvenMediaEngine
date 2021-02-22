@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+    restart: always
     ports:
     - "1935:1935/tcp"
     - "8443:8443/tcp"
@@ -24,6 +25,7 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+    restart: always
     ports:
     - "443:443/tcp"
     - "9001:9001/tcp"
