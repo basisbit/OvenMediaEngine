@@ -38,6 +38,8 @@
 #include <modules/bitstream/h264/h264_parser.h>
 #include <modules/bitstream/h265/h265_parser.h>
 #include <modules/bitstream/nalu/nal_unit_fragment_header.h>
+#include <modules/bitstream/opus/opus.h>
+#include <modules/bitstream/vp8/vp8.h>
 
 #include "mediarouter_private.h"
 
@@ -250,7 +252,7 @@ bool MediaRouteStream::ParseTrackInfo(std::shared_ptr<MediaTrack> &media_track, 
 	// Parse media track information by codec.
 	switch (media_track->GetCodecId())
 	{
-		case MediaCodecId::H264:
+		case MediaCodecId::H264: {
 			if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::H264_ANNEXB)
 			{
 				// for extradata
@@ -316,9 +318,10 @@ bool MediaRouteStream::ParseTrackInfo(std::shared_ptr<MediaTrack> &media_track, 
 					media_track->SetCodecExtradata(extradata);
 				}
 			}
-			break;
+		}
+		break;
 
-		case MediaCodecId::H265:
+		case MediaCodecId::H265: {
 			if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::H265_ANNEXB)
 			{
 				// Analyzes NALU packets and extracts track information for SPS/PPS types.
@@ -359,9 +362,10 @@ bool MediaRouteStream::ParseTrackInfo(std::shared_ptr<MediaTrack> &media_track, 
 
 				// TODO: Set Extradata(HEVCDecoderConfiguration) for HEVC
 			}
-			break;
+		}
+		break;
 
-		case MediaCodecId::Aac:
+		case MediaCodecId::Aac: {
 			if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::AAC_ADTS)
 			{
 				// for extradata
@@ -403,12 +407,46 @@ bool MediaRouteStream::ParseTrackInfo(std::shared_ptr<MediaTrack> &media_track, 
 					// SetParseTrackInfo(media_track, true);
 				}
 			}
-			break;
+		}
+		break;
+
+		case MediaCodecId::Opus: {
+			if (OPUSParser::IsValid(media_packet->GetData()->GetDataAs<uint8_t>(), media_packet->GetDataLength()) == false)
+			{
+				logte("Could not parse OPUS header");
+
+				return false;
+			}
+
+			OPUSParser parser;
+			if (OPUSParser::Parse(media_packet->GetData()->GetDataAs<uint8_t>(), media_packet->GetDataLength(), parser) == true)
+			{
+				// The opus has a fixed samplerate of 48000
+				media_track->SetSampleRate(48000);
+				media_track->GetChannel().SetLayout((parser.GetStereoFlag() == 0) ? (AudioChannel::Layout::LayoutMono) : (AudioChannel::Layout::LayoutStereo));
+			}
+		}
+		break;
+
+		case MediaCodecId::Vp8: {
+			if (VP8Parser::IsValid(media_packet->GetData()->GetDataAs<uint8_t>(), media_packet->GetDataLength()) == false)
+			{
+				logte("Could not parse VP8 header");
+
+				return false;
+			}
+
+			VP8Parser parser;
+			if (VP8Parser::Parse(media_packet->GetData()->GetDataAs<uint8_t>(), media_packet->GetDataLength(), parser) == true)
+			{
+				media_track->SetWidth(parser.GetWidth());
+				media_track->SetHeight(parser.GetHeight());
+			}
+		}
+		break;
 
 		// The incoming stream does not support this codec.
-		case MediaCodecId::Vp8:
 		case MediaCodecId::Vp9:
-		case MediaCodecId::Opus:
 		case MediaCodecId::Jpeg:
 		case MediaCodecId::Png:
 			// SetParseTrackInfo(media_track, true);
@@ -527,7 +565,6 @@ bool MediaRouteStream::ConvertToDefaultBitstream(std::shared_ptr<MediaTrack> &me
 
 			break;
 		case MediaCodecId::Aac:
-
 			if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::AAC_LATM)
 			{
 				std::vector<uint8_t> extradata;
@@ -555,9 +592,12 @@ bool MediaRouteStream::ConvertToDefaultBitstream(std::shared_ptr<MediaTrack> &me
 				return false;
 			}
 			break;
+
 		case MediaCodecId::Vp8:
-		case MediaCodecId::Vp9:
 		case MediaCodecId::Opus:
+			return true;
+
+		case MediaCodecId::Vp9:
 			logte("Not support codec in stream");
 			return false;
 
@@ -762,10 +802,8 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 		_stat_first_time_diff[track_id] = uptime - rescaled_last_pts;
 	}
 
-	if (_stop_watch.IsElapsed(5000))
+	if (_stop_watch.IsElapsed(5000) && _stop_watch.Update())
 	{
-		_stop_watch.Update();
-
 		// Uptime
 		int64_t uptime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - _stat_start_time).count();
 
@@ -807,12 +845,25 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 			min_pts = std::min(min_pts, rescaled_last_pts);
 			max_pts = std::max(max_pts, rescaled_last_pts);
 
-			stat_track_str.AppendFormat("\n\t[%3d] type: %5s(%2d/%4s), %s, pkt_cnt: %6lld, pkt_siz: %sB", track_id, track->GetMediaType() == MediaType::Video ? "video" : "audio", track->GetCodecId(), ::StringFromMediaCodecId(track->GetCodecId()).CStr(), pts_str.CStr(), _stat_recv_pkt_count[track_id], ov::Converter::ToSiString(_stat_recv_pkt_size[track_id], 1).CStr());
+			stat_track_str.AppendFormat("\n\t[%3d] type: %5s(%2d/%4s), %s, pkt_cnt: %6lld, pkt_siz: %sB",
+										track_id,
+										track->GetMediaType() == MediaType::Video ? "video" : "audio",
+										track->GetCodecId(),
+										::StringFromMediaCodecId(track->GetCodecId()).CStr(),
+										pts_str.CStr(),
+										_stat_recv_pkt_count[track_id],
+										ov::Converter::ToSiString(_stat_recv_pkt_size[track_id], 1).CStr());
 		}
 
 		ov::String stat_stream_str = "";
 
-		stat_stream_str.AppendFormat("\n - MediaRouter Stream | type: %s, name: %s/%s, uptime: %lldms, queue: %d, A-V(%lld)", _inout_type == MediaRouterStreamType::INBOUND ? "Inbound" : "Outbound", _stream->GetApplicationInfo().GetName().CStr(), _stream->GetName().CStr(), (int64_t)uptime, _packets_queue.Size(), max_pts - min_pts);
+		stat_stream_str.AppendFormat("\n - MediaRouter Stream | type: %s, name: %s/%s, uptime: %lldms, queue: %d, A-V(%lld)",
+									 _inout_type == MediaRouterStreamType::INBOUND ? "Inbound" : "Outbound",
+									 _stream->GetApplicationInfo().GetName().CStr(),
+									 _stream->GetName().CStr(),
+									 (int64_t)uptime,
+									 _packets_queue.Size(),
+									 max_pts - min_pts);
 
 		stat_track_str = stat_stream_str + stat_track_str;
 
@@ -913,11 +964,9 @@ void MediaRouteStream::DropNonDecodingPackets()
 	}
 }
 
-bool MediaRouteStream::Push(std::shared_ptr<MediaPacket> media_packet)
+void MediaRouteStream::Push(std::shared_ptr<MediaPacket> media_packet)
 {
 	_packets_queue.Enqueue(std::move(media_packet));
-
-	return (_packets_queue.Size() > 0) ? true : false;
 }
 
 std::shared_ptr<MediaPacket> MediaRouteStream::Pop()

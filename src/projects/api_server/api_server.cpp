@@ -17,7 +17,7 @@ namespace api
 {
 	bool Server::Start(const std::shared_ptr<cfg::Server> &server_config)
 	{
-		auto manager = HttpServerManager::GetInstance();
+		auto manager = http::svr::HttpServerManager::GetInstance();
 
 		// Port configurations
 		const auto &api_bind_config = server_config->GetBind().GetManagers().GetApi();
@@ -33,17 +33,30 @@ namespace api
 
 		_access_token = api_config.GetAccessToken();
 
+		if (_access_token.IsEmpty())
+		{
+#if DEBUG
+			logtw("An empty AccessToken setting was found. This is only allowed on Debug builds for ease of development, and the Release build does not allow empty AccessToken.");
+#else	// DEBUG
+			logte("Empty  AccessToken is not allowed");
+#endif	// DEBUG
+		}
+
 		auto http_interceptor = CreateInterceptor();
 
 		bool http_server_result = true;
 		bool is_parsed;
+
+		auto worker_count = api_bind_config.GetWorkerCount(&is_parsed);
+		worker_count = is_parsed ? worker_count : HTTP_SERVER_USE_DEFAULT_COUNT;
+
 		auto &port = api_bind_config.GetPort(&is_parsed);
 		ov::SocketAddress address;
 		if (is_parsed)
 		{
 			address = ov::SocketAddress(server_config->GetIp(), port.GetPort());
 
-			_http_server = manager->CreateHttpServer("APIServer", address);
+			_http_server = manager->CreateHttpServer("APIServer", address, worker_count);
 
 			if (_http_server != nullptr)
 			{
@@ -51,7 +64,7 @@ namespace api
 			}
 			else
 			{
-				logte("Could not initialize HttpServer");
+				logte("Could not initialize http::svr::Server");
 				http_server_result = false;
 			}
 		}
@@ -73,7 +86,7 @@ namespace api
 
 			if (certificate != nullptr)
 			{
-				_https_server = manager->CreateHttpsServer("APIServer", tls_address, certificate);
+				_https_server = manager->CreateHttpsServer("APIServer", tls_address, certificate, worker_count);
 
 				if (_https_server != nullptr)
 				{
@@ -81,7 +94,7 @@ namespace api
 				}
 				else
 				{
-					logte("Could not initialize HttpsServer");
+					logte("Could not initialize http::svr::HttpsServer");
 					https_server_result = false;
 				}
 			}
@@ -89,12 +102,25 @@ namespace api
 
 		if (http_server_result && https_server_result)
 		{
+			ov::String port_description;
+
+			if (_http_server != nullptr)
+			{
+				port_description.AppendFormat("%s/%s", address.ToString().CStr(), ov::StringFromSocketType(ov::SocketType::Tcp));
+			}
+
+			if (_https_server != nullptr)
+			{
+				if (port_description.IsEmpty() == false)
+				{
+					port_description.Append(", ");
+				}
+
+				port_description.AppendFormat("TLS: %s/%s", tls_address.ToString().CStr(), ov::StringFromSocketType(ov::SocketType::Tcp));
+			}
+
 			// Everything is OK
-			logti("API Server is listening on %s%s%s%s...",
-				  (_http_server != nullptr) ? address.ToString().CStr() : "",
-				  ((_http_server != nullptr) && (_https_server != nullptr)) ? ", " : "",
-				  (_https_server != nullptr) ? "TLS: " : "",
-				  (_https_server != nullptr) ? tls_address.ToString().CStr() : "");
+			logti("API Server is listening on %s...", port_description.CStr());
 
 			return true;
 		}
@@ -106,9 +132,9 @@ namespace api
 		return false;
 	}
 
-	std::shared_ptr<HttpRequestInterceptor> Server::CreateInterceptor()
+	std::shared_ptr<http::svr::RequestInterceptor> Server::CreateInterceptor()
 	{
-		auto http_interceptor = std::make_shared<HttpDefaultInterceptor>();
+		auto http_interceptor = std::make_shared<http::svr::DefaultInterceptor>();
 
 		// Request Handlers will be added to http_interceptor
 		_root_controller = std::make_shared<RootController>(_access_token);
@@ -120,10 +146,10 @@ namespace api
 
 	bool Server::Stop()
 	{
-		auto manager = HttpServerManager::GetInstance();
+		auto manager = http::svr::HttpServerManager::GetInstance();
 
-		std::shared_ptr<HttpServer> http_server = std::move(_http_server);
-		std::shared_ptr<HttpsServer> https_server = std::move(_https_server);
+		std::shared_ptr<http::svr::HttpServer> http_server = std::move(_http_server);
+		std::shared_ptr<http::svr::HttpsServer> https_server = std::move(_https_server);
 
 		bool http_result = (http_server != nullptr) ? manager->ReleaseServer(http_server) : true;
 		bool https_result = (https_server != nullptr) ? manager->ReleaseServer(https_server) : true;

@@ -134,8 +134,6 @@ bool SegmentWorkerManager::Start(int worker_count, const SegmentProcessHandler &
 		_workers.push_back(worker);
 	}
 
-	_worker_count = worker_count;
-
 	return true;
 }
 
@@ -156,14 +154,14 @@ bool SegmentWorkerManager::Stop()
 // Worker Add
 //====================================================================================================
 #define MAX_WORKER_INDEX 100000000
-bool SegmentWorkerManager::AddWork(const std::shared_ptr<HttpClient> &response,
+bool SegmentWorkerManager::AddWork(const std::shared_ptr<http::svr::HttpConnection> &response,
 								   const ov::String &request_target,
 								   const ov::String &origin_url)
 {
 	auto work_info = std::make_shared<SegmentWorkInfo>(response, request_target, origin_url);
 
 	// insert thread
-	_workers[(_worker_index % _worker_count)]->AddWorkInfo(work_info);
+	_workers[(_worker_index % _workers.size())]->AddWorkInfo(work_info);
 
 	if (_worker_index < MAX_WORKER_INDEX)
 		_worker_index++;

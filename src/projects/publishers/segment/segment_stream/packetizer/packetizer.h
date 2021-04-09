@@ -20,7 +20,7 @@ class Packetizer
 {
 public:
 	Packetizer(const ov::String &app_name, const ov::String &stream_name,
-			   uint32_t segment_count, uint32_t segment_duration,
+			   uint32_t segment_count, uint32_t segment_save_count, uint32_t segment_duration,
 			   const std::shared_ptr<MediaTrack> &video_track, const std::shared_ptr<MediaTrack> &audio_track,
 			   const std::shared_ptr<ChunkedTransferInterface> &chunked_transfer);
 
@@ -66,6 +66,8 @@ public:
 
 protected:
 	virtual void SetReadyForStreaming() noexcept;
+
+	static ov::String GetCodecString(const std::shared_ptr<const MediaTrack> &track);
 
 	ov::String _app_name;
 	ov::String _stream_name;

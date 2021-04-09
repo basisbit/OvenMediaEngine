@@ -66,7 +66,7 @@ namespace ov
 		return bio_method;
 	}
 
-	bool Tls::Initialize(const SSL_METHOD *method, const std::shared_ptr<Certificate> &certificate, const std::shared_ptr<Certificate> &chain_certificate, const ov::String &cipher_list, TlsCallback callback)
+	bool Tls::InitializeServerTls(const SSL_METHOD *method, const std::shared_ptr<const Certificate> &certificate, const std::shared_ptr<Certificate> &chain_certificate, const ov::String &cipher_list, TlsCallback callback)
 	{
 		bool result = true;
 
@@ -85,7 +85,28 @@ namespace ov
 		}
 
 		return result;
-	};
+	}
+
+	bool Tls::InitializeClientTls(const SSL_METHOD *method, TlsCallback callback)
+	{
+		bool result = true;
+
+		_callback = std::move(callback);
+
+		// // Create SSL_CTX
+		// result = result && PrepareSslContext(method, certificate, chain_certificate, cipher_list);
+		// // Create BIO
+		// result = result && PrepareBio();
+		// // Create SSL
+		// result = result && PrepareSsl(nullptr);
+
+		if (result == false)
+		{
+			_callback = TlsCallback();
+		}
+
+		return result;
+	}
 
 	bool Tls::Uninitialize()
 	{
@@ -101,7 +122,7 @@ namespace ov
 		return true;
 	}
 
-	bool Tls::PrepareSslContext(const SSL_METHOD *method, const std::shared_ptr<Certificate> &certificate, const std::shared_ptr<Certificate> &chain_certificate, const ov::String &cipher_list)
+	bool Tls::PrepareSslContext(const SSL_METHOD *method, const std::shared_ptr<const Certificate> &certificate, const std::shared_ptr<Certificate> &chain_certificate, const ov::String &cipher_list)
 	{
 		do
 		{
@@ -156,6 +177,12 @@ namespace ov
 			// https://wiki.mozilla.org/Security/Server_Side_TLS
 			::SSL_CTX_set_cipher_list(ctx, cipher_list.CStr());
 			::SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION);
+			::SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+
+			// Disable TLS1.3 because it is not yet supported properly by the HTTP server implementation (HTTP2 support, Session tickets, ...)
+			// This also allows for using less secure cipher suites for lower CPU requirements when using HLS/DASH/LL-DASH streaming
+			::SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION);
+			// Disable old TLS versions which are neither secure nor needed any more
 			::SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
 
 			_ssl_ctx = std::move(ctx);

@@ -32,13 +32,55 @@ FileSession::FileSession(const info::Session &session_info,
 
 FileSession::~FileSession()
 {
-	Stop();
 	logtd("FileSession(%d) has been terminated finally", GetId());
 }
 
 bool FileSession::Start()
 {
+	if (StartRecord() == false)
+	{
+		logte("Failed to start recording. id(%d)", GetId());
+
+		return false;
+	}
+
 	logtd("FileSession(%d) has started.", GetId());
+
+	return Session::Start();
+}
+
+bool FileSession::Stop()
+{
+	if (StopRecord() == false)
+	{
+		logte("Failed to stop recording. id(%d)", GetId());
+
+		return false;
+	}
+
+	logtd("FileSession(%d) has stoped", GetId());
+
+	return Session::Stop();
+}
+bool FileSession::Split()
+{
+	if (StopRecord() == false)
+	{
+		logte("Failed to stop recording. id(%d)", GetId());
+		return false;
+	}
+
+	if (StartRecord() == false)
+	{
+		logte("Failed to start recording. id(%d)", GetId());
+		return false;
+	}
+
+	return true;
+}
+bool FileSession::StartRecord()
+{
+	std::lock_guard<std::shared_mutex> mlock(_lock);
 
 	GetRecord()->UpdateRecordStartTime();
 
@@ -55,13 +97,19 @@ bool FileSession::Start()
 	GetRecord()->SetTmpPath(GetOutputTempFilePath(GetRecord()));
 	GetRecord()->SetState(info::Record::RecordState::Recording);
 
+	// Get extension and container format
+	ov::String output_extention = ov::PathManager::ExtractExtension(GetRecord()->GetFilePath());
+	ov::String output_format = FileWriter::GetFormatByExtension(output_extention, "mpegts");
+
+	logtd("output extention : %s", output_extention.CStr());
+	logtd("output format : %s", output_format.CStr());
+
 	// Create directory for temporary file
 	ov::String tmp_directory = ov::PathManager::ExtractPath(GetRecord()->GetTmpPath());
 	ov::String tmp_real_directory = ov::PathManager::Combine(GetRootPath(), tmp_directory);
 
 	if (MakeDirectoryRecursive(tmp_real_directory.CStr()) == false)
 	{
-		logte("%s, %s", GetRootPath().CStr(), tmp_directory.CStr());
 		logte("Could not create directory. path(%s)", tmp_real_directory.CStr());
 
 		SetState(SessionState::Error);
@@ -70,7 +118,7 @@ bool FileSession::Start()
 		return false;
 	}
 
-	logtd("The temporary directory was created successfully. (%s)", tmp_real_directory.CStr());
+	// logtd("The temporary directory was created successfully. (%s)", tmp_real_directory.CStr());
 
 	_writer = FileWriter::Create();
 	if (_writer == nullptr)
@@ -81,7 +129,7 @@ bool FileSession::Start()
 		return false;
 	}
 
-	if (_writer->SetPath(ov::PathManager::Combine(GetRootPath(), GetRecord()->GetTmpPath()), "mpegts") == false)
+	if (_writer->SetPath(ov::PathManager::Combine(GetRootPath(), GetRecord()->GetTmpPath()), output_format) == false)
 	{
 		SetState(SessionState::Error);
 		GetRecord()->SetState(info::Record::RecordState::Error);
@@ -90,7 +138,8 @@ bool FileSession::Start()
 
 		return false;
 	}
-	logtd("The temporary file was created successfully. (%s)", _writer->GetPath().CStr());
+
+	logtd("The temporary file was created successfully. file: %s", _writer->GetPath().CStr());
 
 	for (auto &track_item : GetStream()->GetTracks())
 	{
@@ -104,16 +153,9 @@ bool FileSession::Start()
 			continue;
 		}
 
-		// It does not transmit unless it is H264 and AAC codec.
-		if (!(track->GetCodecId() == cmn::MediaCodecId::H264 ||
-			  track->GetCodecId() == cmn::MediaCodecId::H265 ||
-			  track->GetCodecId() == cmn::MediaCodecId::Vp8 ||
-			  track->GetCodecId() == cmn::MediaCodecId::Vp9 ||
-			  track->GetCodecId() == cmn::MediaCodecId::Aac ||
-			  track->GetCodecId() == cmn::MediaCodecId::Mp3 ||
-			  track->GetCodecId() == cmn::MediaCodecId::Opus))
+		if (FileWriter::IsSupportCodec(output_format, track->GetCodecId()) == false)
 		{
-			logtw("Could not supported codec. codec_id(%d)", track->GetCodecId());
+			logtw("%s format does not support the codec(%d)", output_format.CStr(), track->GetCodecId());
 			continue;
 		}
 
@@ -144,11 +186,15 @@ bool FileSession::Start()
 		return false;
 	}
 
-	return Session::Start();
+	logtd("Recording started. id: %d", GetId());
+
+	return true;
 }
 
-bool FileSession::Stop()
+bool FileSession::StopRecord()
 {
+	std::lock_guard<std::shared_mutex> mlock(_lock);
+
 	if (_writer != nullptr)
 	{
 		_writer->Stop();
@@ -175,14 +221,13 @@ bool FileSession::Stop()
 
 		if (MakeDirectoryRecursive(output_directory.CStr()) == false)
 		{
-			logte("Could not create directory. path(%s)", output_directory.CStr());
+			logte("Could not create directory. path: %s", output_directory.CStr());
 
 			SetState(SessionState::Error);
 			GetRecord()->SetState(info::Record::RecordState::Error);
 
 			return false;
 		}
-		logtd("file directory was created successfully. (%s)", output_directory.CStr());
 
 		// Create directory for information file
 		ov::String info_path = ov::PathManager::Combine(GetRootPath(), GetRecord()->GetInfoPath());
@@ -190,49 +235,53 @@ bool FileSession::Stop()
 
 		if (MakeDirectoryRecursive(info_directory.CStr()) == false)
 		{
-			logte("Could not create directory. path(%s)", info_directory.CStr());
+			logte("Could not create directory. path: %s", info_directory.CStr());
 
 			SetState(SessionState::Error);
 			GetRecord()->SetState(info::Record::RecordState::Error);
 
 			return false;
 		}
-		logtd("information directory was created successfully. (%s)", info_directory.CStr());
+
+		// logtd("file directory was created successfully. (%s)", output_directory.CStr());
+		// logtd("information directory was created successfully. (%s)", info_directory.CStr());
 
 		// Moves temporary files to a user-defined path.
 		ov::String tmp_output_path = _writer->GetPath();
 
 		if (rename(tmp_output_path.CStr(), output_path.CStr()) != 0)
 		{
-			logte("Failed to move file. %s -> %s", tmp_output_path.CStr(), output_path.CStr());
+			logte("Failed to move file.\n from: %s\n to:  %s", tmp_output_path.CStr(), output_path.CStr());
 
 			SetState(SessionState::Error);
 			GetRecord()->SetState(info::Record::RecordState::Error);
 
 			return false;
 		}
-		logtd("Move the temporary file to real file (%s)->(%s)", tmp_output_path.CStr(), output_path.CStr());
+		logtd("Move the temporary file to real file.\n from: %s\n   to: %s", tmp_output_path.CStr(), output_path.CStr());
 
 		// Append recorded information to the information file
 		if (FileExport::GetInstance()->ExportRecordToXml(info_path, GetRecord()) == false)
 		{
-			logte("Failed to export xml file. path(%s)", info_path.CStr());
+			logte("Failed to export xml file. path: %s", info_path.CStr());
 		}
-		logtd("Append to the infomation file. %s", info_path.CStr());
+		logtd("Append to the infomation file. file: %s", info_path.CStr());
 
 		GetRecord()->SetState(info::Record::RecordState::Stopped);
 		GetRecord()->IncreaseSequence();
 
 		_writer = nullptr;
 
-		logtd("FileSession(%d) has stoped", GetId());
+		logtd("Recording finished. id: %d", GetId());
 	}
 
-	return Session::Stop();
+	return true;
 }
 
 bool FileSession::SendOutgoingData(const std::any &packet)
 {
+	std::lock_guard<std::shared_mutex> mlock(_lock);
+
 	std::shared_ptr<MediaPacket> session_packet;
 
 	try
@@ -304,7 +353,7 @@ ov::String FileSession::GetRootPath()
 ov::String FileSession::GetOutputTempFilePath(std::shared_ptr<info::Record> &record)
 {
 	ov::String tmp_directory = ov::PathManager::ExtractPath(record->GetFilePath());
-	ov::String tmp_filename = ov::String::FormatString("tmp_%s.ts", ov::Random::GenerateString(32).CStr());
+	ov::String tmp_filename = ov::String::FormatString("tmp_%s", ov::Random::GenerateString(32).CStr());
 
 	return ov::PathManager::Combine(tmp_directory, tmp_filename);
 }
@@ -425,7 +474,7 @@ ov::String FileSession::ConvertMacro(ov::String src)
 		tmp = matches[1];
 		ov::String group = ov::String(tmp.c_str());
 
-		logtd("Full Match(%s) => Group(%s)", full_match.CStr(), group.CStr());
+		// logtd("Full Match(%s) => Group(%s)", full_match.CStr(), group.CStr());
 
 		if (group.IndexOf("VirtualHost") != -1L)
 		{

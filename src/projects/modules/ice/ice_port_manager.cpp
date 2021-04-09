@@ -12,120 +12,139 @@
 #include <modules/address/address_utilities.h>
 #include <modules/rtc_signalling/rtc_ice_candidate.h>
 
-
-// std::shared_ptr<IcePort> IcePortManager::CreatePort(const cfg::bind::pub::IceCandidates &ice_candidates, std::shared_ptr<IcePortObserver> observer)
-
 std::shared_ptr<IcePort> IcePortManager::CreatePort(std::shared_ptr<IcePortObserver> observer)
 {
-	std::shared_ptr<IcePort> ice_port = nullptr;
-
-	ice_port = std::make_shared<IcePort>();
-	if(ice_port != nullptr)
+	if(_ice_port == nullptr)
 	{
-		ice_port->AddObserver(std::move(observer));
-	}
-	else
-	{
-		logte("Cannot create ICE port");
-	}
+		_ice_port = std::make_shared<IcePort>();
 
-	return ice_port;
+		observer->SetId(_last_issued_observer_id++);
+		_observers.push_back(observer);
+	}
+	
+	return _ice_port;
 }
 
-bool IcePortManager::CreateIceCandidates(std::shared_ptr<IcePort> ice_port, const cfg::bind::pub::IceCandidates &ice_candidates)
+bool IcePortManager::IsRegisteredObserver(const std::shared_ptr<IcePortObserver> &observer)
 {
-	std::vector<RtcIceCandidate> ice_candidate_list;
+	for(const auto &item : _observers)
+	{
+		if(item->GetId() == observer->GetId())
+		{
+			return true;
+		}
+	}
 
-	if(GenerateIceCandidates(ice_candidates, &ice_candidate_list) == false)
+	return false;
+}
+
+bool IcePortManager::CreateIceCandidates(std::shared_ptr<IcePortObserver> observer, const cfg::bind::cmm::IceCandidates &ice_candidates_config)
+{
+	if(_ice_port == nullptr || IsRegisteredObserver(observer) == false)
+	{
+		return false;
+	}
+
+	std::vector<std::vector<RtcIceCandidate>> ice_candidate_list;
+
+	if(GenerateIceCandidates(ice_candidates_config, &ice_candidate_list) == false)
 	{
 		logte("Could not parse ICE candidates");
 		return false;
 	}
 
-	if(ice_port->CreateIceCandidates(std::move(ice_candidate_list)) == false)
+	bool is_parsed;
+	auto ice_worker_count = ice_candidates_config.GetIceWorkerCount(&is_parsed);
+	ice_worker_count = is_parsed ? ice_worker_count : PHYSICAL_PORT_USE_DEFAULT_COUNT;
+
+	if(_ice_port->CreateIceCandidates(ice_candidate_list, ice_worker_count) == false)
 	{
-		ice_port->Close();
-		ice_port = nullptr;
+		Release(observer);
 
 		logte("Could not create ice candidates");
 		OV_ASSERT2(false);
 	}
 	else
 	{
-		logtd("IceCandidates is created successfully: %s", ice_port->ToString().CStr());
+		observer->AppendIceCandidates(ice_candidate_list);
+		logtd("IceCandidates is created successfully: %s", _ice_port->ToString().CStr());
 	}
 
 	return true;
 }
 
-bool IcePortManager::CreateTurnServer(std::shared_ptr<IcePort> ice_port, uint16_t listening_port, const ov::SocketType socket_type)
+bool IcePortManager::CreateTurnServer(std::shared_ptr<IcePortObserver> observer, uint16_t listening_port, const ov::SocketType socket_type, int tcp_relay_worker_count)
 {
-	if(ice_port->CreateTurnServer(listening_port, socket_type) == false)
+	if(_ice_port == nullptr || IsRegisteredObserver(observer) == false)
 	{
-		ice_port->Close();
-		ice_port = nullptr;
+		return false;
+	}
+
+	if(_ice_port->CreateTurnServer(listening_port, socket_type, tcp_relay_worker_count) == false)
+	{
+		Release(observer);
 
 		logte("Could not create turn server");
 		OV_ASSERT2(false);
 	}
 	else
 	{
+		observer->SetTurnServerSocketType(socket_type);
+		observer->SetTurnServerPort(listening_port);
 		logti("RelayServer is created successfully: host:%d?transport=tcp", listening_port);
 	}
 	
 	return true;
 }
 
-bool IcePortManager::ReleasePort(std::shared_ptr<IcePort> ice_port, std::shared_ptr<IcePortObserver> observer)
+bool IcePortManager::Release(std::shared_ptr<IcePortObserver> observer)
 {
-	if(observer != nullptr)
+	if(IsRegisteredObserver(observer) == false)
 	{
-		if(ice_port->RemoveObserver(observer) == false)
-		{
-			OV_ASSERT(false, "An error occurred while remove observer: %p", observer.get());
-			return false;
-		}
-	}
-	else
-	{
-		if(ice_port->RemoveObservers() == false)
-		{
-			OV_ASSERT(false, "An error occurred while remove observers");
-			return false;
-		}
+		return false;
 	}
 
-	ice_port->Close();
+	if(_ice_port != nullptr)
+	{
+		_ice_port->Close();
+		_ice_port = nullptr;
+	}
+
+	_observers.clear();
 
 	return true;
 }
 
-bool IcePortManager::GenerateIceCandidates(const cfg::bind::pub::IceCandidates &ice_candidates, std::vector<RtcIceCandidate> *parsed_ice_candidate_list)
+bool IcePortManager::GenerateIceCandidates(const cfg::bind::cmm::IceCandidates &ice_candidates_config, std::vector<std::vector<RtcIceCandidate>> *ice_candidate_list)
 {
-	auto &list = ice_candidates.GetIceCandidateList();
+	auto &list_config = ice_candidates_config.GetIceCandidateList();
 
-	for(auto &ice_candidate : list)
+	for(auto &ice_candidate_config : list_config)
 	{
 		std::vector<ov::String> ip_list;
 		ov::SocketType socket_type;
 		int start_port;
 		int end_port;
 
-		if(ParseIceCandidate(ice_candidate, &ip_list, &socket_type, &start_port, &end_port) == false)
+		if(ParseIceCandidate(ice_candidate_config, &ip_list, &socket_type, &start_port, &end_port) == false)
 		{
-			logte("Invalid ICE candidate in configuration: %s", ice_candidate.CStr());
+			logte("Invalid ICE candidate in configuration: %s", ice_candidate_config.CStr());
 			return false;
 		}
 
-		for(const auto &local_ip : ip_list)
+		ov::String protocol = (socket_type == ov::SocketType::Tcp) ? "TCP" : "UDP";
+
+		for (int port_num = start_port; port_num <= end_port; port_num++)
 		{
-			for(int port_num = start_port; port_num <= end_port; port_num++)
+			std::vector<RtcIceCandidate> ice_candidates;
+
+			for (const auto &local_ip : ip_list)
 			{
 				// Create an ICE candidate using local_ip & port_num
-				ov::String protocol = (socket_type == ov::SocketType::Tcp) ? "TCP" : "UDP";
-
-				parsed_ice_candidate_list->emplace_back(protocol, local_ip, static_cast<uint16_t>(port_num), 0, "");
+				ice_candidates.emplace_back(protocol, local_ip, static_cast<uint16_t>(port_num), 0, "");
 			}
+
+			ice_candidate_list->push_back(std::move(ice_candidates));
 		}
 	}
 

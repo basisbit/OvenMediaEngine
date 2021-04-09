@@ -73,6 +73,11 @@ void FilePublisher::WorkerThread()
 
 std::shared_ptr<pub::Application> FilePublisher::OnCreatePublisherApplication(const info::Application &application_info)
 {
+	if (IsModuleAvailable() == false)
+	{
+		return nullptr;
+	}
+
 	return FileApplication::Create(FilePublisher::GetSharedPtrAs<pub::Publisher>(), application_info);
 }
 
@@ -131,14 +136,6 @@ void FilePublisher::StopSession(std::shared_ptr<FileSession> session)
 		case pub::Session::SessionState::Started:
 			session->Stop();
 			break;
-		case pub::Session::SessionState::Ready:
-			[[fallthrough]];
-		case pub::Session::SessionState::Stopping:
-			[[fallthrough]];
-		case pub::Session::SessionState::Stopped:
-			[[fallthrough]];
-		case pub::Session::SessionState::Error:
-			[[fallthrough]];
 		default:
 			break;
 	}
@@ -147,6 +144,21 @@ void FilePublisher::StopSession(std::shared_ptr<FileSession> session)
 	if (session_state != next_session_state)
 	{
 		logtd("Changed State. State(%d - %d)", session_state, next_session_state);
+	}
+}
+
+void FilePublisher::SplitSession(std::shared_ptr<FileSession> session)
+{
+	auto record_state = session->GetRecord()->GetState();
+
+	switch (record_state)
+	{
+		case info::Record::RecordState::Recording:
+			session->StopRecord();
+			session->StartRecord();
+			break;
+		default:
+			break;
 	}
 }
 
@@ -189,12 +201,43 @@ void FilePublisher::SessionController()
 			{
 				StopSession(session);
 			}
+
+			// When setting interval parameters, perform segmentation recording.
+			if ((uint64_t)session->GetRecord()->GetInterval() > 0)
+			{
+				if (session->GetRecord()->GetRecordTime() > (uint64_t)session->GetRecord()->GetInterval())
+				{
+					SplitSession(session);
+				}
+			}
+			// When setting schedule parameter, perform segmentation recording.
+			else if (session->GetRecord()->GetSchedule().IsEmpty() != true)
+			{
+				if (session->GetRecord()->IsNextScheduleTimeEmpty() == true)
+				{
+					if (session->GetRecord()->UpdateNextScheduleTime() == false)
+					{
+						userdata->SetEnable(false);
+						logte("Failed to update next schedule time. reqeuset to stop recording.");
+					}
+				}
+				else if (session->GetRecord()->GetNextScheduleTime() <= std::chrono::system_clock::now())
+				{
+					SplitSession(session);
+					if (session->GetRecord()->UpdateNextScheduleTime() == false)
+					{
+						userdata->SetEnable(false);
+						logte("Failed to update next schedule time. reqeuset to stop recording.");
+					}
+				}
+			}
 		}
 		else
 		{
 			userdata->SetState(info::Record::RecordState::Ready);
 		}
 
+		// Garbage collector of removed userdata sets
 		if (userdata->GetRemove() == true)
 		{
 			logtd("Remove userdata of file publiser. id(%s)", userdata->GetId().CStr());
@@ -208,10 +251,11 @@ void FilePublisher::SessionController()
 }
 
 std::shared_ptr<ov::Error> FilePublisher::RecordStart(const info::VHostAppName &vhost_app_name,
-													  const std::shared_ptr<info::Record> &record)
+													  const std::shared_ptr<info::Record> record)
 {
 	std::lock_guard<std::shared_mutex> lock(_userdata_sets_mutex);
 
+	// Checking for the required parameters
 	if (record->GetId().IsEmpty() == true || record->GetStreamName().IsEmpty() == true)
 	{
 		ov::String error_message = "There is no required parameter [";
@@ -231,13 +275,44 @@ std::shared_ptr<ov::Error> FilePublisher::RecordStart(const info::VHostAppName &
 		return ov::Error::CreateError(FilePublisherStatusCode::FailureInvalidParameter, error_message);
 	}
 
+	// Validation check of duplicate parameters
+	if (record->GetSchedule().IsEmpty() == false && record->GetInterval() > 0)
+	{
+		ov::String error_message = "[Interval] and [Schedule] cannot be used at the same time";
+
+		return ov::Error::CreateError(FilePublisherStatusCode::FailureInvalidParameter, error_message);
+	}
+
+	// Validation check of schedule Parameter
+	if (record->GetSchedule().IsEmpty() == false)
+	{
+		ov::String pattern = R"(^(\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*\/([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])) (\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*\/([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])) (\*|([0-9]|1[0-9]|2[0-3])|\*\/([0-9]|1[0-9]|2[0-3]))$)";
+		auto regex = ov::Regex(pattern);
+		auto error = regex.Compile();
+
+		if (error != nullptr)
+		{
+			ov::String error_message = "Invalid regular expression pattern";
+			return ov::Error::CreateError(FilePublisherStatusCode::FailureInvalidParameter, error_message);
+		}
+
+		// Just validation for schedule pattren
+		auto match_result = regex.Matches(record->GetSchedule().CStr());
+		if (match_result.GetError() != nullptr)
+		{
+			ov::String error_message = "Invalid [schedule] parameter";
+			return ov::Error::CreateError(FilePublisherStatusCode::FailureInvalidParameter, error_message);
+		}
+	}
+
+	// Checking for the dupilicate id
 	if (_userdata_sets.GetByKey(record->GetId()) != nullptr)
 	{
 		ov::String error_message = "Duplicate ID already exists";
 
 		return ov::Error::CreateError(FilePublisherStatusCode::FailureDupulicateKey, error_message);
 	}
-	
+
 	record->SetTransactionId(ov::Random::GenerateString(16));
 	record->SetEnable(true);
 	record->SetRemove(false);
@@ -250,7 +325,7 @@ std::shared_ptr<ov::Error> FilePublisher::RecordStart(const info::VHostAppName &
 }
 
 std::shared_ptr<ov::Error> FilePublisher::RecordStop(const info::VHostAppName &vhost_app_name,
-													 const std::shared_ptr<info::Record> &record)
+													 const std::shared_ptr<info::Record> record)
 {
 	std::lock_guard<std::shared_mutex> lock(_userdata_sets_mutex);
 

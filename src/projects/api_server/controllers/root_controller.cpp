@@ -38,69 +38,75 @@ namespace api
 		CreateSubController<v1::V1Controller>(R"(\/v1)");
 
 		// This handler is called if it does not match all other registered handlers
-		Register(HttpMethod::All, R"(.+)", &RootController::OnNotFound);
+		Register(http::Method::All, R"(.+)", &RootController::OnNotFound);
 	};
 
 	void RootController::PrepareAccessTokenHandler()
 	{
-		_interceptor->Register(HttpMethod::All, R"(.+)", [=](const std::shared_ptr<HttpClient> &client) -> HttpNextHandler {
+		_interceptor->Register(http::Method::All, R"(.+)", [=](const std::shared_ptr<http::svr::HttpConnection> &client) -> http::svr::NextHandler {
+#if DEBUG
+			if (_access_token.IsEmpty())
+			{
+				// Authorization is disabled
+				return http::svr::NextHandler::Call;
+			}
+#endif	// DEBUG
+
 			auto authorization = client->GetRequest()->GetHeader("Authorization");
 
 			ov::String message = nullptr;
 
-			if (authorization.GetLength() > 0)
+			do
 			{
+				if (authorization.IsEmpty())
+				{
+					message = "Authorization header is required to call API";
+					break;
+				}
+
 				auto tokens = authorization.Split(" ");
 
-				if (tokens.size() == 2)
-				{
-					if (tokens[0].UpperCaseString() == "BASIC")
-					{
-						auto data = ov::Base64::Decode(tokens[1]);
-
-						if (data != nullptr)
-						{
-							ov::String str = data->ToString();
-
-							if (str == _access_token)
-							{
-								return HttpNextHandler::Call;
-							}
-							else
-							{
-								message = "Invalid credential";
-							}
-						}
-						else
-						{
-							message = "Invalid credential format";
-						}
-					}
-					else
-					{
-						message.AppendFormat("Not supported credential type: %s", tokens[0].CStr());
-					}
-				}
-				else
+				if (tokens.size() != 2)
 				{
 					// Invalid tokens
 					message = "Invalid authorization header";
+					break;
 				}
-			}
-			else
-			{
-				message = "Authorization header is required to call API";
-			}
 
-			ApiResponse response(HttpError::CreateError(HttpStatusCode::Forbidden, message));
+				if (tokens[0].UpperCaseString() != "BASIC")
+				{
+					message.AppendFormat("Not supported credential type: %s", tokens[0].CStr());
+					break;
+				}
+
+				auto data = ov::Base64::Decode(tokens[1]);
+
+				if (data == nullptr)
+				{
+					message = "Invalid credential format";
+					break;
+				}
+
+				ov::String str = data->ToString();
+
+				if (str != _access_token)
+				{
+					message = "Invalid credential";
+					break;
+				}
+
+				return http::svr::NextHandler::Call;
+			} while (false);
+
+			ApiResponse response(http::HttpError::CreateError(http::StatusCode::Forbidden, message));
 			response.SendToClient(client);
 
-			return HttpNextHandler::DoNotCall;
+			return http::svr::NextHandler::DoNotCall;
 		});
 	}
 
-	ApiResponse RootController::OnNotFound(const std::shared_ptr<HttpClient> &client)
+	ApiResponse RootController::OnNotFound(const std::shared_ptr<http::svr::HttpConnection> &client)
 	{
-		return HttpError::CreateError(HttpStatusCode::NotFound, "Controller not found");
+		return http::HttpError::CreateError(http::StatusCode::NotFound, "Controller not found");
 	}
 }  // namespace api

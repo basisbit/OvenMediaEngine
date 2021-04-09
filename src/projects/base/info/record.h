@@ -1,11 +1,12 @@
 #pragma once
 
 #include <string>
+
 #include "base/common_types.h"
 #include "base/ovlibrary/enable_shared_from_this.h"
+#include "session.h"
 #include "stream.h"
 #include "vhost_app_name.h"
-#include "session.h"
 
 namespace info
 {
@@ -23,19 +24,22 @@ namespace info
 		void SetId(ov::String id);
 		ov::String GetId() const;
 
+		void SetMetadata(ov::String metadata);
+		ov::String GetMetadata() const;
+
 		void SetStream(const info::Stream &stream);
 		const info::Stream &GetStream() const
 		{
 			return *_stream;
 		}
-		
-		void SetEnable(bool eanble) ;
+
+		void SetEnable(bool eanble);
 		bool GetEnable();
 
-		void SetVhost(ov::String value);
+		void SetVhost(ov::String vhost_name);
 		ov::String GetVhost();
 
-		void SetApplication(ov::String value);
+		void SetApplication(ov::String app_name);
 		ov::String GetApplication();
 
 		void SetRemove(bool value);
@@ -45,7 +49,17 @@ namespace info
 
 		void SetSessionId(session_id_t id);
 		session_id_t GetSessionId();
-		
+
+		void SetInterval(int32_t interval);
+		int32_t GetInterval();
+
+		void SetSchedule(ov::String schedule);
+		ov::String GetSchedule();
+		const std::chrono::system_clock::time_point &GetNextScheduleTime() const;
+		void SetNextScheduleTime(std::chrono::system_clock::time_point &next);
+		bool IsNextScheduleTimeEmpty();
+		bool UpdateNextScheduleTime();
+
 		void SetFilePath(ov::String file_path);
 		ov::String GetFilePath();
 
@@ -99,7 +113,10 @@ namespace info
 
 		// User custom id
 		ov::String _id;
-	
+
+		// It is used as additional information for recording session. It's not essential information.
+		ov::String _metadata;
+
 		// Enabled/Disabled Flag
 		bool _enable;
 
@@ -112,30 +129,65 @@ namespace info
 		// Application
 		ov::String _aplication_name;
 
+		// The stream target for the Outbound that you want to record
 		std::shared_ptr<info::Stream> _stream;
 
+		// Path
 		ov::String _file_path;
-		bool 	   _file_path_by_user;
+		bool _file_path_by_user;
+
 		ov::String _info_path;
-		bool 	   _info_path_by_user;
+		bool _info_path_by_user;
+
 		ov::String _tmp_path;
 
-		uint64_t _record_bytes;
-		uint64_t _record_time;
+		// Recording interval
+		//  0 : infinite
+		//  > 0 : seconds
+		int32_t _interval;
 
+		// Split recording a schedule synchronized with system time, be similar to the cron-tap pattern
+		//
+		//  "<second> <minute> <hour>"
+		//
+		//   * : any value
+		//   / : step values
+		//   0-59 : allowed value of second and minute
+		//   0-23 : allowed value of hour
+		//
+		// Examples
+		// ---------------------------
+		// * * *    : Every second
+		// */30 * * : Every 30 seconds starting at 0 second after miniute
+		// 30 * *   : At second 30 of every minitue
+		// * 2 *    : Every second during minute 2 of every hour
+		// * */2 *  : Every second past 2 minute starting at 0 minute after the hour
+		// 0 0 1    : at 1:00:00 every day
+		// 0 0 */1  : at second 0, at minute 0, every hour starting at 0 hour of every day
+
+		// Recording schedule expr
+		ov::String _schedule;
+		std::chrono::system_clock::time_point _schedule_next;
+
+		// Recorded (Accumulated) file size
+		uint64_t _record_bytes;
 		uint64_t _record_total_bytes;
+
+		// Recorded (Accumulated) Time
+		uint64_t _record_time;
 		uint64_t _record_total_time;
 
+		// Sequence number of the recorded file
 		uint32_t _sequence;
 
+		// Event Occurrence Time
 		std::chrono::system_clock::time_point _created_time;
-
-		std::chrono::system_clock::time_point _record_start_time;		
-		std::chrono::system_clock::time_point _record_stop_time;	
+		std::chrono::system_clock::time_point _record_start_time;
+		std::chrono::system_clock::time_point _record_stop_time;
 
 		RecordState _state;
 
 		// File Session Id
-		session_id_t _session_id;		
+		session_id_t _session_id;
 	};
 }  // namespace info

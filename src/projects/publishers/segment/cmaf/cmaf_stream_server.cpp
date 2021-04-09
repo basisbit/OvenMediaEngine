@@ -14,7 +14,7 @@
 #include "cmaf_packetizer.h"
 #include "cmaf_private.h"
 
-HttpConnection CmafStreamServer::ProcessSegmentRequest(const std::shared_ptr<HttpClient> &client,
+http::svr::ConnectionPolicy CmafStreamServer::ProcessSegmentRequest(const std::shared_ptr<http::svr::HttpConnection> &client,
 													   const SegmentStreamRequestInfo &request_info,
 													   SegmentType segment_type)
 {
@@ -53,10 +53,11 @@ HttpConnection CmafStreamServer::ProcessSegmentRequest(const std::shared_ptr<Htt
 
 			if (stream_info == nullptr)
 			{
-				OV_ASSERT(false, "Stream does not exist, but remains in _http_chunk_list");
-
-				response->SetStatusCode(HttpStatusCode::InternalServerError);
-				return HttpConnection::Closed;
+				// The stream has been deleted, but if it remains in the Worker queue, this code will run.
+				response->SetStatusCode(http::StatusCode::NotFound);
+				_http_chunk_list.clear();
+				
+				return http::svr::ConnectionPolicy::Closed;
 			}
 
 			client->GetRequest()->SetExtra(stream_info);
@@ -79,7 +80,7 @@ HttpConnection CmafStreamServer::ProcessSegmentRequest(const std::shared_ptr<Htt
 
 			chunk_item->second->client_list.push_back(client);
 
-			return HttpConnection::KeepAlive;
+			return http::svr::ConnectionPolicy::KeepAlive;
 		}
 	}
 
@@ -106,17 +107,26 @@ void CmafStreamServer::OnCmafChunkDataPush(const ov::String &app_name, const ov:
 
 	chunk_item->second->AddChunkData(chunk_data);
 
-	for (auto client : chunk_item->second->client_list)
+	auto client_item = chunk_item->second->client_list.begin();
+
+	while (client_item != chunk_item->second->client_list.end())
 	{
+		auto &client = *client_item;
+
 		auto response = client->GetResponse();
 
 		if (response->SendChunkedData(chunk_data))
 		{
 			IncreaseBytesOut(client, chunk_data->GetLength());
+
+			++client_item;
 		}
 		else
 		{
 			logtw("Failed to send the chunked data for [%s/%s, %s] to %s (%zu bytes)", app_name.CStr(), stream_name.CStr(), file_name.CStr(), response->GetRemote()->ToString().CStr(), chunk_data->GetLength());
+
+			client_item = chunk_item->second->client_list.erase(client_item);
+			response->Close();
 		}
 	}
 }

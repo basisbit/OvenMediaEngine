@@ -8,7 +8,7 @@
 //==============================================================================
 #include "segment_stream_server.h"
 
-#include <modules/http_server/http_server_manager.h>
+#include <modules/http/server/http_server_manager.h>
 #include <monitoring/monitoring.h>
 
 #include <regex>
@@ -29,7 +29,8 @@ SegmentStreamServer::SegmentStreamServer()
 
 bool SegmentStreamServer::Start(const ov::SocketAddress *address,
 								const ov::SocketAddress *tls_address,
-								int thread_count)
+								int thread_count,
+								int worker_count)
 {
 	if ((_http_server != nullptr) || (_https_server != nullptr))
 	{
@@ -42,9 +43,11 @@ bool SegmentStreamServer::Start(const ov::SocketAddress *address,
 	bool result = true;
 	auto vhost_list = ocst::Orchestrator::GetInstance()->GetVirtualHostList();
 
-	auto manager = HttpServerManager::GetInstance();
-	std::shared_ptr<HttpServer> http_server = (address != nullptr) ? manager->CreateHttpServer(GetPublisherName(), *address) : nullptr;
-	std::shared_ptr<HttpsServer> https_server = (tls_address != nullptr) ? manager->CreateHttpsServer(GetPublisherName(), *tls_address, vhost_list) : nullptr;
+	auto manager = http::svr::HttpServerManager::GetInstance();
+	std::shared_ptr<http::svr::HttpServer> http_server = (address != nullptr) ? manager->CreateHttpServer("SegPub", *address, worker_count) : nullptr;
+	result = result && ((address != nullptr) ? (http_server != nullptr) : true);
+	std::shared_ptr<http::svr::HttpsServer> https_server = (tls_address != nullptr) ? manager->CreateHttpsServer("SegPub", *tls_address, vhost_list, worker_count) : nullptr;
+	result = result && ((tls_address != nullptr) ? (https_server != nullptr) : true);
 
 	auto segment_stream_interceptor = result ? CreateInterceptor() : nullptr;
 
@@ -198,13 +201,13 @@ bool SegmentStreamServer::ParseRequestUrl(const ov::String &request_url,
 	return true;
 }
 
-bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &client,
+bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<http::svr::HttpConnection> &client,
 										 const ov::String &request_target,
 										 const ov::String &origin_url)
 {
 	auto response = client->GetResponse();
 	auto request = client->GetRequest();
-	HttpConnection connetion = HttpConnection::Closed;
+	http::svr::ConnectionPolicy connetion = http::svr::ConnectionPolicy::Closed;
 
 	do
 	{
@@ -229,7 +232,7 @@ bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &clie
 		if (ParseRequestUrl(request_target, app_name, stream_name, file_name, file_ext) == false)
 		{
 			logtd("Failed to parse URL: %s", request_target.CStr());
-			response->SetStatusCode(HttpStatusCode::NotFound);
+			response->SetStatusCode(http::StatusCode::NotFound);
 			break;
 		}
 
@@ -250,10 +253,10 @@ bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &clie
 
 	switch (connetion)
 	{
-		case HttpConnection::Closed:
+		case http::svr::ConnectionPolicy::Closed:
 			return response->Close();
 
-		case HttpConnection::KeepAlive:
+		case http::svr::ConnectionPolicy::KeepAlive:
 			return true;
 
 		default:
@@ -263,7 +266,7 @@ bool SegmentStreamServer::ProcessRequest(const std::shared_ptr<HttpClient> &clie
 	}
 }
 
-bool SegmentStreamServer::SetAllowOrigin(const ov::String &origin_url, const std::shared_ptr<HttpResponse> &response)
+bool SegmentStreamServer::SetAllowOrigin(const ov::String &origin_url, const std::shared_ptr<http::svr::HttpResponse> &response)
 {
 	if (_cors_urls.empty())
 	{
@@ -388,7 +391,7 @@ bool SegmentStreamServer::UrlExistCheck(const std::vector<ov::String> &url_list,
 	return (item != url_list.end());
 }
 
-bool SegmentStreamServer::IncreaseBytesOut(const std::shared_ptr<HttpClient> &client, size_t sent_bytes)
+bool SegmentStreamServer::IncreaseBytesOut(const std::shared_ptr<http::svr::HttpConnection> &client, size_t sent_bytes)
 {
 	auto request = client->GetRequest();
 

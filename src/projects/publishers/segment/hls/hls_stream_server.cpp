@@ -11,7 +11,7 @@
 #include "../segment_publisher.h"
 #include "hls_private.h"
 
-HttpConnection HlsStreamServer::ProcessStreamRequest(const std::shared_ptr<HttpClient> &client,
+http::svr::ConnectionPolicy HlsStreamServer::ProcessStreamRequest(const std::shared_ptr<http::svr::HttpConnection> &client,
 													 const SegmentStreamRequestInfo &request_info,
 													 const ov::String &file_ext)
 {
@@ -26,12 +26,12 @@ HttpConnection HlsStreamServer::ProcessStreamRequest(const std::shared_ptr<HttpC
 		return ProcessSegmentRequest(client, request_info, SegmentType::MpegTs);
 	}
 
-	response->SetStatusCode(HttpStatusCode::NotFound);
+	response->SetStatusCode(http::StatusCode::NotFound);
 	response->Response();
-	return HttpConnection::Closed;
+	return http::svr::ConnectionPolicy::Closed;
 }
 
-HttpConnection HlsStreamServer::ProcessPlayListRequest(const std::shared_ptr<HttpClient> &client,
+http::svr::ConnectionPolicy HlsStreamServer::ProcessPlayListRequest(const std::shared_ptr<http::svr::HttpConnection> &client,
 													   const SegmentStreamRequestInfo &request_info,
 													   PlayListType play_list_type)
 {
@@ -47,17 +47,17 @@ HttpConnection HlsStreamServer::ProcessPlayListRequest(const std::shared_ptr<Htt
 	if (item == _observers.end())
 	{
 		logtd("Could not find a %s playlist for [%s/%s], %s", GetPublisherName(), request_info.vhost_app_name.CStr(), request_info.stream_name.CStr(), request_info.file_name.CStr());
-		response->SetStatusCode(HttpStatusCode::NotFound);
+		response->SetStatusCode(http::StatusCode::NotFound);
 		response->Response();
 
-		return HttpConnection::Closed;
+		return http::svr::ConnectionPolicy::Closed;
 	}
 
-	if (response->GetStatusCode() != HttpStatusCode::OK || play_list.IsEmpty())
+	if (response->GetStatusCode() != http::StatusCode::OK || play_list.IsEmpty())
 	{
 		logte("Could not find a %s playlist for [%s/%s], %s : %d", GetPublisherName(), request_info.vhost_app_name.CStr(), request_info.stream_name.CStr(), request_info.file_name.CStr(), response->GetStatusCode());
 		response->Response();
-		return HttpConnection::Closed;
+		return http::svr::ConnectionPolicy::Closed;
 	}
 
 	// Set HTTP header
@@ -71,10 +71,10 @@ HttpConnection HlsStreamServer::ProcessPlayListRequest(const std::shared_ptr<Htt
 
 	IncreaseBytesOut(client, sent_bytes);
 
-	return HttpConnection::Closed;
+	return http::svr::ConnectionPolicy::Closed;
 }
 
-HttpConnection HlsStreamServer::ProcessSegmentRequest(const std::shared_ptr<HttpClient> &client,
+http::svr::ConnectionPolicy HlsStreamServer::ProcessSegmentRequest(const std::shared_ptr<http::svr::HttpConnection> &client,
 													  const SegmentStreamRequestInfo &request_info,
 													  SegmentType segment_type)
 {
@@ -90,10 +90,10 @@ HttpConnection HlsStreamServer::ProcessSegmentRequest(const std::shared_ptr<Http
 	if (item == _observers.end())
 	{
 		logtd("Could not find HLS segment: %s/%s, %s", request_info.vhost_app_name.CStr(), request_info.stream_name.CStr(), request_info.file_name.CStr());
-		response->SetStatusCode(HttpStatusCode::NotFound);
+		response->SetStatusCode(http::StatusCode::NotFound);
 		response->Response();
 
-		return HttpConnection::Closed;
+		return http::svr::ConnectionPolicy::Closed;
 	}
 
 	// Set HTTP header
@@ -103,5 +103,5 @@ HttpConnection HlsStreamServer::ProcessSegmentRequest(const std::shared_ptr<Http
 
 	IncreaseBytesOut(client, sent_bytes);
 
-	return HttpConnection::Closed;
+	return http::svr::ConnectionPolicy::Closed;
 }
