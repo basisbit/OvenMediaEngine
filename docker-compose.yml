@@ -22,6 +22,7 @@ services:
 #    - ./local-data/tls:/etc/ssl
 
   edge:
+    image: ome_edge_image:latest
     build:
       context: .
       dockerfile: ./Dockerfile
