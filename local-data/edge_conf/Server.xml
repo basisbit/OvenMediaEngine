@@ -18,6 +18,9 @@
 			<HLS>
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</HLS>
+			<DASH>
+				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
+			</DASH>
 		</Publishers>
 		
 		<Managers>
@@ -126,6 +129,13 @@
 								<Url>pony.town</Url>
 							</CrossDomains>
 						</HLS>
+						<LLDASH>
+							<CrossDomains>
+								<Url>*.brony.eu</Url>
+								<Url>*.pony.town</Url>
+								<Url>pony.town</Url>
+							</CrossDomains>
+						</LLDASH>
 					</Publishers>
 				</Application>
 			</Applications>
