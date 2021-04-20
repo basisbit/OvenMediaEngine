@@ -130,6 +130,7 @@
 							</CrossDomains>
 						</HLS>
 						<LLDASH>
+							<SegmentDuration>5</SegmentDuration>
 							<CrossDomains>
 								<Url>*.brony.eu</Url>
 								<Url>*.pony.town</Url>
