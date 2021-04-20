@@ -78,12 +78,13 @@ namespace pvd
 						auto current = std::chrono::high_resolution_clock::now();
 						auto elapsed_time_from_last_sent = std::chrono::duration_cast<std::chrono::seconds>(current - stream_metrics->GetLastSentTime()).count();
 						auto elapsed_time_from_last_recv = std::chrono::duration_cast<std::chrono::seconds>(current - stream_metrics->GetLastRecvTime()).count();
-						
-						// The stream type is pull stream, if packets do NOT arrive for more than 5 seconds, it is a seriously warning situation
+
+						// Abort pull stream when no packets arrived for more than 5 seconds. Most likely the stream source died, thus give OME a chance to correctly create a new stream + playlistis
 						if(elapsed_time_from_last_recv > 5)
 						{
-							logtw("%s/%s(%u) There are no incoming packets. %d seconds have elapsed since the last packet was received.", 
+							logtw("%s/%s(%u) There were no incoming packets. %d seconds have elapsed since the last packet was received. Deleting the stream.", 
 									stream->GetApplicationInfo().GetName().CStr(), stream->GetName().CStr(), stream->GetId(), elapsed_time_from_last_recv);
+							DeleteStream(stream);
 						}
 
 						if(elapsed_time_from_last_sent > MAX_UNUSED_STREAM_AVAILABLE_TIME_SEC)
