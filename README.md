@@ -23,17 +23,19 @@ Please click on each banner below for details.
 
 ## Features
 
-* RTMP Push, MPEG-2 TS Push (Beta), RTSP Pull (Beta) Input
+* Ingest
+  * WebRTC Push, RTMP Push, SRT Push, MPEG-2 TS Push, RTSP Pull
 * WebRTC sub-second streaming 
+  * WebRTC over TCP \(with Embedded TURN Server\)
   * ICE \(Interactive Connectivity Establishment\)
   * DTLS \(Datagram Transport Layer Security\)
   * SRTP \(Secure Real-time Transport Protocol\)
   * ULPFEC \(Forward Error Correction\) with VP8, H.264
   * In-band FEC \(Forward Error Correction\) with Opus
+  * Embedded WebRTC Signalling Server \(WebSocket based\)
 * Low latency MPEG-DASH(Chunked CAMF) streaming
 * Legacy HLS/MPEG-DASH Streaming
 * Embedded Live Transcoder \(VP8, H.264, Opus, AAC, Bypass\)
-* Embedded WebRTC Signalling Server \(WebSocket based\)
 * Origin-Edge structure
 * Monitoring
 * Beta
@@ -62,8 +64,10 @@ We have tested OME on the platforms listed below. However, we think it can work 
 docker run -d \
 -p 1935:1935 \
 -p 3333:3333 \
+-p 3478:3478 \
 -p 8080:8080 \
 -p 9000:9000 \
+-p 9999:9999/udp \
 -p 4000-4005:4000-4005/udp \
 -p 10006-10010:10006-10010/udp \
 --name ovenmediaengine \
@@ -76,8 +80,10 @@ You can also store the configuration files on your host:
 docker run -d \
 -p 1935:1935 \
 -p 3333:3333 \
+-p 3478:3478 \
 -p 8080:8080 \
 -p 9000:9000 \
+-p 9999:9999/udp \
 -p 4000-4005:4000-4005/udp \
 -p 10006-10010:10006-10010/udp \
 -v ome-origin-conf:/opt/ovenmediaengine/bin/origin_conf \

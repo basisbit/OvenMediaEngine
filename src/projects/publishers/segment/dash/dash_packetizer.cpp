@@ -435,7 +435,7 @@ bool DashPacketizer::AppendAudioFrame(const std::shared_ptr<const MediaPacket> &
 
 	if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::AAC_ADTS)
 	{
-		data = AacConverter::ConvertAdtsToLatm(data, &length_list);
+		data = AacConverter::ConvertAdtsToRaw(data, &length_list);
 	}
 	else
 	{
@@ -665,9 +665,11 @@ bool DashPacketizer::UpdatePlayList()
 			R"(	</Period>)" << std::endl;
 	}
 
+#if 0
 	xml
 		// <UTCTiming />
 		<< R"(	<UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="%s" />)" << std::endl;
+#endif
 
 	xml
 		// </MPD>

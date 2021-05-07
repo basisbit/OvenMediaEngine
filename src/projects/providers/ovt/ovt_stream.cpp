@@ -186,7 +186,7 @@ namespace pvd
 
 		_client_socket = pool->AllocSocket();
 
-		if ((_client_socket == nullptr) || (_client_socket->AttachToWorker() == false))
+		if (_client_socket == nullptr)
 		{
 			_state = State::ERROR;
 			logte("To create client socket is failed.");
@@ -348,9 +348,7 @@ namespace pvd
 			{
 				ov::String extra_data_base64 = json_track["extra_data"].asString().c_str();
 				auto extra_data = ov::Base64::Decode(extra_data_base64);
-				auto start = extra_data->GetDataAs<uint8_t>();
-				std::vector<uint8_t> v(start, start + extra_data->GetLength());
-				new_track->SetCodecExtradata(v);
+				new_track->SetCodecExtradata(extra_data);
 			}
 
 			// video or audio

@@ -322,9 +322,14 @@ bool IcePort::RemoveSession(uint32_t session_id)
 		_address_port_table.erase(ice_port_info->address);
 
 		// Close only TCP (TURN)
-		if(ice_port_info->remote->GetSocket().GetType() == ov::SocketType::Tcp)
+		auto remote = ice_port_info->remote;
+
+		if (remote != nullptr)
 		{
-			ice_port_info->remote->CloseIfNeeded();
+			if (remote->GetSocket().GetType() == ov::SocketType::Tcp)
+			{
+				remote->CloseIfNeeded();
+			}
 		}
 	}
 
@@ -347,6 +352,10 @@ void IcePort::CheckTimedoutItem()
 			if(it->second.IsExpired())
 			{
 				it = _binding_request_table.erase(it);
+			}
+			else
+			{
+				++it;
 			}
 		}
 	}
@@ -442,8 +451,15 @@ bool IcePort::Send(uint32_t session_id, const std::shared_ptr<const ov::Data> &d
 	{
 		return false;
 	}
-	
-	return ice_port_info->remote->SendTo(ice_port_info->address, send_data);
+
+	auto remote = ice_port_info->remote;
+
+	if (remote == nullptr)
+	{
+		return false;
+	}
+
+	return remote->SendTo(ice_port_info->address, send_data);
 }
 
 void IcePort::OnConnected(const std::shared_ptr<ov::Socket> &remote)
@@ -787,8 +803,8 @@ bool IcePort::SendStunBindingRequest(const std::shared_ptr<ov::Socket> &remote, 
 	// unknown_attribute->SetData(&(unknown_data[0]), 4);
 	// message.AddAttribute(std::move(attribute));
 
-	// ICE-CONTROLLING (for testing hash)
-	attribute = std::make_shared<StunUnknownAttribute>(0x802A, 8);
+	// ICE-CONTROLLED (for testing hash)
+	attribute = std::make_shared<StunUnknownAttribute>(0x8029, 8);
 	unknown_attribute = dynamic_cast<StunUnknownAttribute *>(attribute.get());
 	uint8_t unknown_data2[] = {0x1C, 0xF5, 0x1E, 0xB1, 0xB0, 0xCB, 0xE3, 0x49};
 	unknown_attribute->SetData(&(unknown_data2[0]), 8);
@@ -808,9 +824,6 @@ bool IcePort::SendStunBindingRequest(const std::shared_ptr<ov::Socket> &remote, 
 
 	logtd("Send Stun Binding Request : %s", address.ToString().CStr());
 
-	// TODO: apply SASLprep(password)
-	SendStunMessage(remote, address, gate_info, message, info->peer_sdp->GetIcePwd());
-
 	// Store binding request transction
 	{
 		std::lock_guard<std::shared_mutex> brt_lock(_binding_request_table_lock);
@@ -820,6 +833,9 @@ bool IcePort::SendStunBindingRequest(const std::shared_ptr<ov::Socket> &remote, 
 
 		logtd("Send Binding Request to(%s) id(%s)", address.ToString().CStr(), transaction_id_key.CStr());
 	}
+
+	// TODO: apply SASLprep(password)
+	SendStunMessage(remote, address, gate_info, message, info->peer_sdp->GetIcePwd());
 
 	return true;
 }

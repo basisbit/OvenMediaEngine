@@ -12,7 +12,8 @@
 #include "webrtc_private.h"
 
 #include "modules/rtp_rtcp/rtcp_info/sender_report.h"
-#include "modules/rtp_rtcp/rtcp_info/fir.h"
+
+#include "base/ovlibrary/random.h"
 
 namespace pvd
 {
@@ -40,7 +41,7 @@ namespace pvd
 								const std::shared_ptr<const SessionDescription> &peer_sdp,
 								const std::shared_ptr<Certificate> &certificate,
 								const std::shared_ptr<IcePort> &ice_port)
-		: PushStream(source_type, stream_name, stream_id, provider)
+		: PushStream(source_type, stream_name, stream_id, provider), Node(NodeType::Edge)
 	{
 		_offer_sdp = offer_sdp;
 		_peer_sdp = peer_sdp;
@@ -65,7 +66,9 @@ namespace pvd
 			logte("m= line of answer does not correspond with offer");
 			return false;
 		}
-	
+
+		_local_ssrc = ov::Random::GenerateUInt32();
+
 		// Create Nodes
 		_rtp_rtcp = std::make_shared<RtpRtcp>(RtpRtcpInterface::GetSharedPtr());
 		_srtp_transport = std::make_shared<SrtpTransport>();
@@ -74,7 +77,6 @@ namespace pvd
 		auto application = std::static_pointer_cast<WebRTCApplication>(GetApplication());
 		_dtls_transport->SetLocalCertificate(_certificate);
 		_dtls_transport->StartDTLS();
-		_dtls_ice_transport = std::make_shared<DtlsIceTransport>(GetId(), _ice_port);
 
 		double audio_lip_sync_timebase = 0, video_lip_sync_timebase = 0;
 
@@ -107,14 +109,23 @@ namespace pvd
 				auto codec = first_payload->GetCodec();
 				auto samplerate = first_payload->GetCodecRate();
 				auto channels = std::atoi(first_payload->GetCodecParams());
+				RtpDepacketizingManager::SupportedDepacketizerType depacketizer_type;
 
 				if(codec == PayloadAttr::SupportCodec::OPUS)
 				{
 					audio_track->SetCodecId(cmn::MediaCodecId::Opus);
+					audio_track->SetOriginBitstream(cmn::BitstreamFormat::OPUS_RTP_RFC_7587);
+					depacketizer_type = RtpDepacketizingManager::SupportedDepacketizerType::OPUS;
+				}
+				else if(codec == PayloadAttr::SupportCodec::MPEG4_GENERIC)
+				{
+					audio_track->SetCodecId(cmn::MediaCodecId::Aac);
+					audio_track->SetOriginBitstream(cmn::BitstreamFormat::AAC_MPEG4_GENERIC);
+					depacketizer_type = RtpDepacketizingManager::SupportedDepacketizerType::MPEG4_GENERIC_AUDIO;
 				}
 				else
 				{
-					logte("%s - Unsupported audio codec : %s", GetName().CStr(), first_payload->GetCodecParams().CStr());
+					logte("%s - Unsupported audio codec : %s", GetName().CStr(), first_payload->GetCodecStr().CStr());
 					return false;
 				}
 				
@@ -128,12 +139,12 @@ namespace pvd
 				{
 					audio_track->GetChannel().SetLayout(cmn::AudioChannel::Layout::LayoutMono);
 				}
-				else if (channels == 2)
+				else
 				{
 					audio_track->GetChannel().SetLayout(cmn::AudioChannel::Layout::LayoutStereo);
 				}
 
-				if(AddDepacketizer(_audio_payload_type, audio_track->GetCodecId()) == false)
+				if(AddDepacketizer(_audio_payload_type, depacketizer_type) == false)
 				{
 					return false;
 				}
@@ -171,6 +182,7 @@ namespace pvd
 				// a=rtpmap:100 H264/90000
 				auto codec = first_payload->GetCodec();
 				auto timebase = first_payload->GetCodecRate();
+				RtpDepacketizingManager::SupportedDepacketizerType depacketizer_type;
 
 				auto video_track = std::make_shared<MediaTrack>();
 
@@ -180,10 +192,14 @@ namespace pvd
 				if(codec == PayloadAttr::SupportCodec::H264)
 				{
 					video_track->SetCodecId(cmn::MediaCodecId::H264);
+					video_track->SetOriginBitstream(cmn::BitstreamFormat::H264_RTP_RFC_6184);
+					depacketizer_type = RtpDepacketizingManager::SupportedDepacketizerType::H264;
 				}
 				else if(codec == PayloadAttr::SupportCodec::VP8)
 				{
 					video_track->SetCodecId(cmn::MediaCodecId::Vp8);
+					video_track->SetOriginBitstream(cmn::BitstreamFormat::VP8_RTP_RFC_7741);
+					depacketizer_type = RtpDepacketizingManager::SupportedDepacketizerType::VP8;
 				}
 				else
 				{
@@ -195,7 +211,7 @@ namespace pvd
 				video_lip_sync_timebase = video_track->GetTimeBase().GetExpr();
 				video_track->SetVideoTimestampScale(1.0);
 
-				if(AddDepacketizer(_video_payload_type, video_track->GetCodecId()) == false)
+				if(AddDepacketizer(_video_payload_type, depacketizer_type) == false)
 				{
 					return false;
 				}
@@ -209,25 +225,26 @@ namespace pvd
 		_lip_sync_clock = std::make_shared<LipSyncClock>(audio_lip_sync_timebase, video_lip_sync_timebase);
 
 		// Connect nodes
-		_rtp_rtcp->RegisterUpperNode(nullptr);
-		_rtp_rtcp->RegisterLowerNode(_srtp_transport);
+		_rtp_rtcp->RegisterPrevNode(nullptr);
+		_rtp_rtcp->RegisterNextNode(_srtp_transport);
 		_rtp_rtcp->Start();
-		_srtp_transport->RegisterUpperNode(_rtp_rtcp);
-		_srtp_transport->RegisterLowerNode(_dtls_transport);
+		_srtp_transport->RegisterPrevNode(_rtp_rtcp);
+		_srtp_transport->RegisterNextNode(_dtls_transport);
 		_srtp_transport->Start();
-		_dtls_transport->RegisterUpperNode(_srtp_transport);
-		_dtls_transport->RegisterLowerNode(_dtls_ice_transport);
+		_dtls_transport->RegisterPrevNode(_srtp_transport);
+		_dtls_transport->RegisterNextNode(ov::Node::GetSharedPtr());
 		_dtls_transport->Start();
-		_dtls_ice_transport->RegisterUpperNode(_dtls_transport);
-		_dtls_ice_transport->RegisterLowerNode(nullptr);
-		_dtls_ice_transport->Start();
+
+		RegisterPrevNode(_dtls_transport);
+		RegisterNextNode(nullptr);
+		ov::Node::Start();
 
 		_fir_timer.Start();
 
 		return pvd::Stream::Start();
 	}
 
-	bool WebRTCStream::AddDepacketizer(uint8_t payload_type, cmn::MediaCodecId codec_id)
+	bool WebRTCStream::AddDepacketizer(uint8_t payload_type, RtpDepacketizingManager::SupportedDepacketizerType codec_id)
 	{
 		// Depacketizer
 		auto depacketizer = RtpDepacketizingManager::Create(codec_id);
@@ -262,11 +279,6 @@ namespace pvd
 			_rtp_rtcp->Stop();
 		}
 
-		if(_dtls_ice_transport != nullptr)
-		{
-			_dtls_ice_transport->Stop();
-		}
-
 		if(_dtls_transport != nullptr)
 		{
 			_dtls_transport->Stop();
@@ -276,6 +288,8 @@ namespace pvd
 		{
 			_srtp_transport->Stop();
 		}
+
+		ov::Node::Stop();
 
 		return pvd::Stream::Stop();
 	}
@@ -290,7 +304,6 @@ namespace pvd
 		return _peer_sdp;
 	}
 
-	// From IcePort -> WebRTCProvider -> Application -> 
 	bool WebRTCStream::OnDataReceived(const std::shared_ptr<const ov::Data> &data)
 	{
 		logtd("OnDataReceived (%d)", data->GetLength());
@@ -299,9 +312,7 @@ namespace pvd
 		//It must not be called during start and stop.
 		std::shared_lock<std::shared_mutex> lock(_start_stop_lock);
 
-		_dtls_ice_transport->OnDataReceived(NodeType::Edge, data);
-		
-		return true;
+		return SendDataToPrevNode(data);
 	}
 
 	uint64_t WebRTCStream::AdjustTimestamp(uint8_t payload_type, uint32_t timestamp)
@@ -434,7 +445,7 @@ namespace pvd
 		if(_fir_timer.IsElapsed(1000))
 		{
 			_fir_timer.Update();
-			SendFIR();
+			_rtp_rtcp->SendFir(_video_ssrc);
 		}
 		
 		// Send Receiver Report
@@ -466,19 +477,22 @@ namespace pvd
 		}
 	}
 
-	// TODO(Getroot): Move to RtpRtcp
-	bool WebRTCStream::SendFIR()
+	// ov::Node Interface
+	// RtpRtcp -> SRTP -> DTLS -> Edge(this)
+	bool WebRTCStream::OnDataReceivedFromPrevNode(NodeType from_node, const std::shared_ptr<ov::Data> &data)
 	{
-		FIR fir;
-	
-		fir.SetSrcSsrc(_video_ssrc);
-		fir.AddFirMessage(_video_ssrc, _fir_seq++);
+		if(ov::Node::GetNodeState() != ov::Node::NodeState::Started)
+		{
+			logtd("Node has not started, so the received data has been canceled.");
+			return false;
+		}
 
-		auto rtcp_packet = std::make_shared<RtcpPacket>();
-		rtcp_packet->Build(fir);
+		return _ice_port->Send(GetId(), data);
+	}
 
-		_rtp_rtcp->SendData(NodeType::Rtcp, rtcp_packet->GetData());
-
+	// WebRTCStream Node has not a lower node so it will not be called
+	bool WebRTCStream::OnDataReceivedFromNextNode(NodeType from_node, const std::shared_ptr<const ov::Data> &data)
+	{
 		return true;
 	}
 }

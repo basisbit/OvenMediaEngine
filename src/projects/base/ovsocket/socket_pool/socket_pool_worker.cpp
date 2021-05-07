@@ -37,11 +37,6 @@ namespace ov
 	{
 	}
 
-	int SocketPoolWorker::GetNativeHandle() const
-	{
-		return (GetType() == SocketType::Srt) ? _srt_epoll : _epoll;
-	}
-
 	bool SocketPoolWorker::Initialize()
 	{
 		if (GetNativeHandle() != InvalidSocket)
@@ -99,6 +94,11 @@ namespace ov
 		return true;
 	}
 
+	int SocketPoolWorker::GetNativeHandle() const
+	{
+		return (GetType() == SocketType::Srt) ? _srt_epoll : _epoll;
+	}
+
 	SocketType SocketPoolWorker::GetType() const
 	{
 		return _pool->GetType();
@@ -132,6 +132,7 @@ namespace ov
 
 				if (_srt_epoll != SRT_INVALID_SOCK)
 				{
+					srt_epoll_set(_srt_epoll, SRT_EPOLL_ENABLE_EMPTY);
 					_epoll_events.resize(EpollMaxEvents);
 					_srt_epoll_events.resize(EpollMaxEvents);
 				}
@@ -207,7 +208,7 @@ namespace ov
 				// Sockets that have failed to send data for a long time are forced to shut down
 				logaw("Failed to send data for %dms - This socket is going to be garbage collection (%s)", OV_SOCKET_EXPIRE_TIMEOUT, socket->ToString().CStr());
 
-				RemoveFromEpoll(socket);
+				DeleteFromEpoll(socket);
 
 				candidate = _gc_candidates.erase(candidate);
 			}
@@ -254,8 +255,37 @@ namespace ov
 					auto socket = socket_data->GetSharedPtr();
 					auto events = event.events;
 
+					logad("Epoll event #%d (total: %d): %s, events: %s (%d, 0x%x), %s",
+						  index, count,
+						  socket->ToString().CStr(),
+						  StringFromEpollEvent(event).CStr(), events, events,
+						  ov::Error::CreateErrorFromErrno()->ToString().CStr());
+
 					if (OV_CHECK_FLAG(events, EPOLLOUT))
 					{
+						if (socket->UpdateFirstEpollEvent())
+						{
+							// EPOLLOUT events might occur immediately after added to epoll
+							logad("EPOLLOUT is ignored - this event might occurs immediately after added to epoll");
+							continue;
+						}
+					}
+
+					if (socket->GetBlockingMode() == BlockingMode::Blocking)
+					{
+						// Blocking mode handles only connection events
+						socket->OnDataWritable();
+						continue;
+					}
+
+					bool need_to_close = false;
+					SocketState new_state = SocketState::Closed;
+
+					if (OV_CHECK_FLAG(events, EPOLLOUT))
+					{
+						// Socket is ready for writing data
+						socket->OnDataWritable();
+
 						switch (socket->DispatchEvents())
 						{
 							case Socket::DispatchResult::Dispatched:
@@ -266,41 +296,47 @@ namespace ov
 								break;
 
 							case Socket::DispatchResult::Error:
-								socket->Close();
+								new_state = SocketState::Error;
+								need_to_close = true;
 								break;
 						}
 					}
 
 					if (OV_CHECK_FLAG(events, EPOLLIN))
 					{
-						socket->OnReadableFromSocket();
+						// Data is received from peer
+						socket->OnDataReceived();
+					}
+
+					if (OV_CHECK_FLAG(events, EPOLLERR))
+					{
+						// An error occurred
+						int error;
+
+						if (socket->GetSockOpt(SO_ERROR, &error))
+						{
+							logad("EPOLLERR detected: %s\n", ::strerror(error));
+						}
+
+						new_state = SocketState::Error;
+						need_to_close = true;
 					}
 
 					if (OV_CHECK_FLAG(events, EPOLLHUP) || OV_CHECK_FLAG(events, EPOLLRDHUP))
 					{
-						auto state = socket->GetState();
+						// Disconnected
+						socket->SetEndOfStream();
 
-						if ((state == SocketState::Created) || (state == SocketState::Listening))
-						{
-							// EPOLLHUP event might occur immediately after creation
-						}
-						else
-						{
-							// Disconnected
-							logad("Epoll event raised: %s, events: %s (%d, 0x%x), %s",
-								  socket->ToString().CStr(),
-								  StringFromEpollEvent(event).CStr(), events, events,
-								  ov::Error::CreateErrorFromErrno()->ToString().CStr());
+						new_state = SocketState::Disconnected;
+						need_to_close = true;
 
-							socket->SetEndOfStream();
-							if (socket->GetState() != SocketState::Closed)
-							{
-								socket->SetState(SocketState::Disconnected);
-							}
-							socket->CloseIfNeeded();
+						_gc_candidates.erase(socket->GetNativeHandle());
+					}
 
-							_gc_candidates.erase(socket->GetNativeHandle());
-						}
+					if (need_to_close)
+					{
+						socket->CloseIfNeeded();
+						socket->SetState(new_state);
 					}
 				}
 			}
@@ -337,8 +373,6 @@ namespace ov
 			{
 				GarbageCollection();
 			}
-
-			MergeSocketList();
 		}
 
 		// Clean up all sockets
@@ -347,11 +381,15 @@ namespace ov
 			auto socket = socket_item.second;
 
 			// Close immediately
-			socket->CloseInternal();
+			if (socket->IsClosable())
+			{
+				socket->CloseInternal();
+				socket->SetState(SocketState::Closed);
+			}
 		}
 	}
 
-	bool SocketPoolWorker::AttachToWorker(const std::shared_ptr<Socket> &socket)
+	bool SocketPoolWorker::AddToEpoll(const std::shared_ptr<Socket> &socket)
 	{
 		OV_ASSERT2(GetNativeHandle() != InvalidSocket);
 
@@ -459,7 +497,6 @@ namespace ov
 
 			case SocketType::Srt:
 				event_count = ::srt_epoll_uwait(_srt_epoll, _srt_epoll_events.data(), EpollMaxEvents, timeout_in_msec);
-
 				if (event_count == 0)
 				{
 					// timed out
@@ -470,6 +507,7 @@ namespace ov
 				else if (event_count > 0)
 				{
 					// polled successfully
+					MergeSocketList();
 
 					// Make a list of epoll_event from SRT_EPOLL_EVENTs
 					for (int index = 0; index < event_count; index++)
@@ -479,9 +517,8 @@ namespace ov
 				}
 				else
 				{
-					OV_ASSERT(false, "Unknown error");
-
 					error = ov::Error::CreateErrorFromSrt();
+					OV_ASSERT(false, "Unknown error: %s", error->ToString().CStr());
 				}
 
 				break;
@@ -562,7 +599,7 @@ namespace ov
 		_sockets_to_dispatch.push_back(socket);
 	}
 
-	bool SocketPoolWorker::RemoveFromEpoll(const std::shared_ptr<Socket> &socket)
+	bool SocketPoolWorker::DeleteFromEpoll(const std::shared_ptr<Socket> &socket)
 	{
 		if (GetNativeHandle() == InvalidSocket)
 		{
@@ -575,7 +612,7 @@ namespace ov
 		std::shared_ptr<ov::Error> error;
 		auto native_handle = socket->GetNativeHandle();
 
-		logad("Trying to remove a socket #%d from epoll...", native_handle);
+		logad("Trying to unregister a socket #%d from epoll...", native_handle);
 
 		switch (GetType())
 		{
@@ -606,10 +643,6 @@ namespace ov
 		if (error == nullptr)
 		{
 			_sockets_to_delete.Enqueue(socket);
-
-			socket->CloseInternal();
-
-			logad("Removed socket: #%d", native_handle);
 		}
 		else
 		{
@@ -629,5 +662,18 @@ namespace ov
 		}
 
 		return (error == nullptr);
+	}
+
+	bool SocketPoolWorker::ReleaseSocket(const std::shared_ptr<Socket> &socket)
+	{
+		if (DeleteFromEpoll(socket))
+		{
+			socket->CloseInternal();
+			logad("Socket is removed: #%d", socket->GetNativeHandle());
+
+			return true;
+		}
+
+		return false;
 	}
 }  // namespace ov
