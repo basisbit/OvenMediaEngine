@@ -138,8 +138,8 @@ namespace ov
 	Socket::~Socket()
 	{
 		// Verify that the socket is closed normally
-		CHECK_STATE(== SocketState::Closed, );
 		OV_ASSERT(_socket.IsValid() == false, "Socket is not closed. Current state: %s", StringFromSocketState(GetState()));
+		CHECK_STATE2(== SocketState::Closed, >= SocketState::Disconnected, );
 	}
 
 	bool Socket::Create(SocketType type)
@@ -274,14 +274,30 @@ namespace ov
 		return true;
 	}
 
-	bool Socket::AddToWorker(bool update_first_event_flag)
+	bool Socket::AddToWorker(bool need_to_wait_first_epoll_event)
 	{
-		if (update_first_event_flag)
+		if (GetType() == ov::SocketType::Srt)
 		{
-			_is_first_event = true;
+			// SRT doesn't generates any epoll events after ::srt_epoll_add_usock()
+			need_to_wait_first_epoll_event = false;
 		}
 
-		return _worker->AddToEpoll(GetSharedPtr());
+		if (need_to_wait_first_epoll_event)
+		{
+			ResetFirstEpollEventReceived();
+		}
+
+		if (_worker->AddToEpoll(GetSharedPtr()))
+		{
+			if (need_to_wait_first_epoll_event)
+			{
+				return WaitForFirstEpollEvent();
+			}
+
+			return true;
+		}
+
+		return false;
 	}
 
 	bool Socket::DeleteFromWorker()
@@ -335,7 +351,7 @@ namespace ov
 		return MakeNonBlockingInternal(callback, true);
 	}
 
-	bool Socket::MakeNonBlockingInternal(std::shared_ptr<SocketAsyncInterface> callback, bool update_first_event_flag)
+	bool Socket::MakeNonBlockingInternal(std::shared_ptr<SocketAsyncInterface> callback, bool need_to_wait_first_epoll_event)
 	{
 		if (_blocking_mode == BlockingMode::NonBlocking)
 		{
@@ -346,18 +362,20 @@ namespace ov
 		}
 
 		auto old_callback = _callback;
+
 		_callback = callback;
+		_blocking_mode = BlockingMode::NonBlocking;
 
 		if (
 			SetBlockingInternal(BlockingMode::NonBlocking) &&
-			AddToWorker(update_first_event_flag))
+			AddToWorker(need_to_wait_first_epoll_event))
 		{
-			_blocking_mode = BlockingMode::NonBlocking;
 			return true;
 		}
 
 		// Rollback
 		_callback = old_callback;
+		_blocking_mode = BlockingMode::Blocking;
 
 		return false;
 	}
@@ -717,11 +735,6 @@ namespace ov
 		return _state;
 	}
 
-	bool Socket::IsClosable() const
-	{
-		return OV_CHECK_FLAG(static_cast<std::underlying_type<SocketState>::type>(_state), SOCKET_STATE_CLOSABLE);
-	}
-
 	void Socket::SetState(SocketState state)
 	{
 		logad("Socket state is changed: %s => %s",
@@ -742,13 +755,13 @@ namespace ov
 		return _stream_id;
 	}
 
-	Socket::DispatchResult Socket::DispatchInternal(DispatchCommand &command)
+	Socket::DispatchResult Socket::DispatchEventInternal(DispatchCommand &command)
 	{
 		SOCKET_PROFILER_INIT();
 		SOCKET_PROFILER_POST_HANDLER([&](int64_t lock_elapsed, int64_t total_elapsed) {
 			if (total_elapsed > 100)
 			{
-				logtw("[SockProfiler] DispatchInternal() - %s, Total: %dms", ToString().CStr(), total_elapsed);
+				logtw("[SockProfiler] DispatchEventInternal() - %s, Total: %dms", ToString().CStr(), total_elapsed);
 			}
 		});
 
@@ -847,7 +860,8 @@ namespace ov
 
 			while (_dispatch_queue.empty() == false)
 			{
-				auto &front = _dispatch_queue.front();
+				auto front = _dispatch_queue.front();
+				_dispatch_queue.pop_front();
 
 				bool is_close_command = front.IsCloseCommand();
 
@@ -868,25 +882,19 @@ namespace ov
 					break;
 				}
 
-				result = DispatchInternal(front);
+				result = DispatchEventInternal(front);
 
 				if (result == DispatchResult::Dispatched)
 				{
-					if (_dispatch_queue.size() > 0)
-					{
-						// Dispatches the next item
-						_dispatch_queue.pop_front();
-					}
-					else
-					{
-						// All items are dispatched int DispatchInternal();
-					}
-
+					// Dispatches the next item
 					continue;
 				}
 				else if (result == DispatchResult::PartialDispatched)
 				{
 					// The data is not fully processed and will not be removed from queue
+
+					// Re-enqueue the command partially processed
+					_dispatch_queue.push_front(front);
 
 					// Close-related commands will be processed when we receive the event from epoll later
 				}
@@ -898,7 +906,6 @@ namespace ov
 					{
 						// Ignore errors that occurred during close
 						result = DispatchResult::Dispatched;
-						break;
 					}
 				}
 
@@ -908,11 +915,12 @@ namespace ov
 
 		// Since the resource is usually cleaned inside the OnClosed() callback,
 		// callback is performed outside the lock_guard to prevent acquiring the lock.
-		if (_post_callback != nullptr)
+		auto post_callback = std::move(_post_callback);
+		if (post_callback != nullptr)
 		{
 			if (_connection_event_fired)
 			{
-				_post_callback->OnClosed();
+				post_callback->OnClosed();
 			}
 		}
 
@@ -1427,8 +1435,8 @@ namespace ov
 				error = Error::CreateError("Socket", "Remote is disconnected");
 				*received_length = 0UL;
 
-				SetState(SocketState::Disconnected);
 				Close();
+				SetState(SocketState::Disconnected);
 
 				return error;
 			}
@@ -1574,17 +1582,17 @@ namespace ov
 	{
 		if (_blocking_mode == BlockingMode::Blocking)
 		{
-			return IsClosable() && Close();
+			return Close();
 		}
 
-		return (IsClosing() == false) && IsClosable() && Close();
+		return (IsClosing() == false) && Close();
 	}
 
-	bool Socket::Close()
+	bool Socket::CloseWithState(SocketState new_state)
 	{
 		CHECK_STATE(>= SocketState::Closed, false);
 
-		if ((GetState() == SocketState::Closed) || (GetState() == SocketState::Error))
+		if (GetState() == SocketState::Closed)
 		{
 			// Suppress error message
 			return false;
@@ -1607,7 +1615,7 @@ namespace ov
 				// Close regardless of result
 				if (CloseInternal())
 				{
-					SetState(SocketState::Closed);
+					SetState(new_state);
 				}
 				else
 				{
@@ -1652,6 +1660,11 @@ namespace ov
 		return DispatchEvents() != DispatchResult::Error;
 	}
 
+	bool Socket::Close()
+	{
+		return CloseWithState(SocketState::Closed);
+	}
+
 	Socket::DispatchResult Socket::HalfClose()
 	{
 		if (GetType() == SocketType::Tcp)
@@ -1693,13 +1706,29 @@ namespace ov
 			{
 				auto error = Error::CreateErrorFromErrno();
 
-				if (error->GetCode() == EAGAIN)
+				switch (error->GetCode())
 				{
-					// Peer doesn't send ACK/FIN yet - ignores this
-					return DispatchResult::Dispatched;
+					case EBADF:
+						// Suppress "Bad file descriptor" message
+						break;
+
+					case EAGAIN:
+						// Peer doesn't send ACK/FIN yet - ignores this
+						return DispatchResult::Dispatched;
+
+					case ECONNRESET:
+						// Suppress "Connection reset by peer" message
+						break;
+
+					case ENOTCONN:
+						// Suppress "Transport endpoint is not connected" message
+						break;
+
+					default:
+						logae("An error occurred while half-closing: %s", error->ToString().CStr());
+						break;
 				}
 
-				logae("An error occurred while half-closing: %s", error->ToString().CStr());
 				return DispatchResult::Error;
 			}
 			else if (result == 0)
@@ -1763,7 +1792,10 @@ namespace ov
 		}
 
 		logad("Socket is already closed");
-		OV_ASSERT2(_state == SocketState::Closed);
+		OV_ASSERT(((_state == SocketState::Closed) ||
+				   (_state == SocketState::Disconnected) ||
+				   (_state == SocketState::Error)),
+				  "Invalid state: %s", StringFromSocketState(_state));
 
 		return false;
 	}
