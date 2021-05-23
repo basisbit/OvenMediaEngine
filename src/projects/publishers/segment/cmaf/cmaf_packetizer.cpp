@@ -39,13 +39,16 @@ static inline void DumpSegmentToFile(const std::shared_ptr<const SegmentItem> &s
 
 CmafPacketizer::CmafPacketizer(const ov::String &app_name, const ov::String &stream_name,
 							   uint32_t segment_count, uint32_t segment_duration,
+							   const ov::String &utc_timing_scheme, const ov::String &utc_timing_value,
 							   std::shared_ptr<MediaTrack> video_track, std::shared_ptr<MediaTrack> audio_track,
 							   const std::shared_ptr<ChunkedTransferInterface> &chunked_transfer)
 	: Packetizer(app_name, stream_name,
 				 1, 1 * 5, segment_duration,
 				 video_track, audio_track,
+				 chunked_transfer),
 
-				 chunked_transfer)
+	  _utc_timing_scheme(utc_timing_scheme),
+	  _utc_timing_value(utc_timing_value)
 {
 	_mpd_min_buffer_time = 6;
 
@@ -95,6 +98,8 @@ CmafPacketizer::CmafPacketizer(const ov::String &app_name, const ov::String &str
 	{
 		_audio_chunk_writer = std::make_shared<CmafChunkWriter>(M4sMediaType::Audio, 2, _ideal_duration_for_audio);
 	}
+
+	_utc_timing_value = _utc_timing_value.Replace("&", "&amp;");
 }
 
 DashFileType CmafPacketizer::GetFileType(const ov::String &file_name)
@@ -402,7 +407,7 @@ bool CmafPacketizer::AppendVideoFrameInternal(const std::shared_ptr<const Packet
 	{
 		if (_video_start_time == -1LL)
 		{
-			_video_start_time = GetCurrentMilliseconds() - duration_in_msec;
+			_video_start_time = ov::Time::GetTimestampInMs() - duration_in_msec;
 		}
 
 		// Check the timestamp to determine if a new segment is to be created
@@ -452,7 +457,7 @@ bool CmafPacketizer::AppendAudioFrameInternal(const std::shared_ptr<const Packet
 
 	if (_audio_start_time == -1LL)
 	{
-		_audio_start_time = GetCurrentMilliseconds() - duration_in_msec;
+		_audio_start_time = ov::Time::GetTimestampInMs() - duration_in_msec;
 	}
 
 	// Skip ADTS header
@@ -777,7 +782,7 @@ void CmafPacketizer::SetReadyForStreaming() noexcept
 		_start_time_ms = std::min(_video_start_time, _audio_start_time);
 	}
 
-	_start_time = MakeUtcMillisecond(_start_time_ms);
+	_start_time = ov::Time::MakeUtcMillisecond(_start_time_ms);
 
 	Packetizer::SetReadyForStreaming();
 }
@@ -832,7 +837,7 @@ void CmafPacketizer::DoJitterCorrection()
 	ov::String stat;
 
 	// Calculate total elapsed time since streaming started
-	int64_t current_time = GetTimestampInMs();
+	int64_t current_time = ov::Time::GetTimestampInMs();
 	int64_t elapsed_time = current_time - _start_time_ms;
 
 	int64_t video_delta = (_last_video_pts >= 0LL) ? (static_cast<int64_t>((_last_video_pts - _first_video_pts) * _video_scale)) : INT64_MAX;
@@ -854,7 +859,7 @@ void CmafPacketizer::DoJitterCorrection()
 	if (new_jitter_correction != _jitter_correction)
 	{
 		// Update start time
-		ov::String new_start_time = MakeUtcMillisecond(_start_time_ms + new_jitter_correction);
+		ov::String new_start_time = ov::Time::MakeUtcMillisecond(_start_time_ms + new_jitter_correction);
 		ov::String jitter_stat = MakeJitterStatString(elapsed_time, current_time, jitter, adjusted_jitter, new_jitter_correction, video_delta, audio_delta, stream_delta);
 
 		if (new_jitter_correction > _jitter_correction)
@@ -893,7 +898,7 @@ bool CmafPacketizer::UpdatePlayList()
 
 	DoJitterCorrection();
 
-	ov::String publish_time = MakeUtcSecond(::time(nullptr));
+	ov::String publish_time = ov::Time::MakeUtcSecond();
 
 	logtd("Trying to update playlist for LL-DASH with availabilityStartTime: %s, publishTime: %s", _start_time.CStr(), publish_time.CStr());
 
@@ -1028,11 +1033,12 @@ bool CmafPacketizer::UpdatePlayList()
 			R"(	</Period>)" << std::endl;
 	}
 
-#if 0
-	xml
-		// <UTCTiming />
-		<< R"(	<UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="%s" />)" << std::endl;
-#endif
+	if ((_utc_timing_scheme.IsEmpty() == false) && (_utc_timing_value.IsEmpty() == false))
+	{
+		xml
+			// <UTCTiming />
+			<< R"(	<UTCTiming schemeIdUri=")" << _utc_timing_scheme.CStr() << R"(" value=")" << _utc_timing_value.CStr() << R"(" />)" << std::endl;
+	}
 
 	xml
 		// </MPD>
@@ -1041,21 +1047,6 @@ bool CmafPacketizer::UpdatePlayList()
 	ov::String play_list = xml.str().c_str();
 
 	SetPlayList(play_list);
-
-	return true;
-}
-
-bool CmafPacketizer::GetPlayList(ov::String &play_list)
-{
-	if (IsReadyForStreaming() == false)
-	{
-		logad("Manifest was requested before the stream began");
-		return false;
-	}
-
-	ov::String current_time = MakeUtcMillisecond();
-
-	play_list = ov::String::FormatString(_play_list.CStr(), current_time.CStr());
 
 	return true;
 }

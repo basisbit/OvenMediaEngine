@@ -17,6 +17,7 @@ class CmafPacketizer : public Packetizer
 public:
 	CmafPacketizer(const ov::String &app_name, const ov::String &stream_name,
 				   uint32_t segment_count, uint32_t segment_duration,
+				   const ov::String &utc_timing_scheme, const ov::String &utc_timing_value,
 				   std::shared_ptr<MediaTrack> video_track, std::shared_ptr<MediaTrack> audio_track,
 				   const std::shared_ptr<ChunkedTransferInterface> &chunked_transfer);
 
@@ -55,8 +56,6 @@ public:
 	std::shared_ptr<const SegmentItem> GetSegmentData(const ov::String &file_name) const override;
 	bool SetSegmentData(const uint32_t sequence_number, ov::String file_name, int64_t timestamp, int64_t timestamp_in_ms, int64_t duration, int64_t duration_in_ms, const std::shared_ptr<const ov::Data> &data);
 
-	bool GetPlayList(ov::String &play_list) override;
-
 protected:
 	using DataCallback = std::function<void(const uint32_t sequence_number, const uint64_t duration_in_msec, const std::shared_ptr<const SampleData> &data, bool new_segment_written)>;
 
@@ -75,6 +74,9 @@ protected:
 	bool UpdatePlayList();
 
 private:
+	ov::String _utc_timing_scheme;
+	ov::String _utc_timing_value;
+
 	bool _video_enable = false;
 	bool _audio_enable = false;
 

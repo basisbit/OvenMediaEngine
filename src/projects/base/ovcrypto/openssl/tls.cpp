@@ -448,7 +448,7 @@ namespace ov
 				default:
 					// Another error occurred
 					OV_ASSERT2(read_bytes == 0);
-					return std::move(data);
+					return data;
 			}
 
 			if (data->Append(buf, read_bytes) == false)
@@ -458,7 +458,7 @@ namespace ov
 
 			if (error == SSL_ERROR_WANT_READ)
 			{
-				return std::move(data);
+				return data;
 			}
 		}
 	}

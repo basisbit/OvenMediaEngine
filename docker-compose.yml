@@ -10,10 +10,12 @@ services:
 #    - "1935:1935/tcp"
 #    - "8443:8443/tcp"
 #    - "9000:9000/tcp"
+#    - "9999:9999/udp"
 #    environment:
-#    - OVT_ORIGIN_PORT=9000
 #    - OME_RTMP_PROV_PORT=1935
 #    - TLS_HTTP_PORT=8443
+#    - OVT_ORIGIN_PORT=9000
+#    - OME_SRT_PROV_PORT=9999
 #    - TLS_DOMAIN_NAME=sinkx.example.com
 #    - CPU_CORES_COUNT=2
 #    command: /opt/ovenmediaengine/bin/OvenMediaEngine -c origin_conf
@@ -29,14 +31,19 @@ services:
     restart: always
     ports:
     - "443:443/tcp"
+    - "3334:3334/tcp"
     - "8944:8944/tcp"
     - "9001:9001/tcp"
+    - "10000-10005:10000-10005/udp"
     environment:
+    - TLS_HTTP_PORT=443
+    - OME_SIGNALLING_PORT=3334
+    - OME_TCP_RELAY_ADDRESS=*:3479
+    - TLS_API_PORT=8944
+    - OVT_ORIGIN_PORT=9000
+    - OME_ICE_CANDIDATES=*:10000-10005/udp
     - OVT_ORIGIN_SERVER_EU=sink1.example.com
     - OVT_ORIGIN_SERVER_USA=sink2.example.com
-    - OVT_ORIGIN_PORT=9000
-    - TLS_HTTP_PORT=443
-    - TLS_API_PORT=8944
     - TLS_DOMAIN_NAME=oven.example.com
     - CPU_CORES_COUNT=2
     - OME_ACCESS_TOKEN=ome-access-token
