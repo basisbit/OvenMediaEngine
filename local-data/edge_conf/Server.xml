@@ -18,9 +18,9 @@
 			<HLS>
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</HLS>
-			<!--<DASH>
+			<DASH>
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
-			</DASH>-->
+			</DASH>
 		</Publishers>
 		
 		<Managers>
@@ -129,14 +129,15 @@
 								<Url>pony.town</Url>
 							</CrossDomains>
 						</HLS>
-						<!--<LLDASH>
+						<LLDASH>
 							<SegmentDuration>5</SegmentDuration>
 							<CrossDomains>
 								<Url>*.brony.eu</Url>
 								<Url>*.pony.town</Url>
 								<Url>pony.town</Url>
 							</CrossDomains>
-						</LLDASH>-->
+							<UTCTiming />
+						</LLDASH>
 					</Publishers>
 				</Application>
 			</Applications>
