@@ -21,6 +21,15 @@
 			<DASH>
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</DASH>
+			<WebRTC>
+				<Signalling>
+					<TLSPort>env:OME_SIGNALLING_PORT:3334</TLSPort>
+				</Signalling>
+				<IceCandidates>
+					<TcpRelay>${env:OME_TCP_RELAY_ADDRESS:*:3478}</TcpRelay>
+					<IceCandidate>${env:OME_ICE_CANDIDATES:*:10000-10005/udp}</IceCandidate>
+				</IceCandidates>
+			</WebRTC>
 		</Publishers>
 		
 		<Managers>
@@ -138,6 +147,11 @@
 							</CrossDomains>
 							<UTCTiming />
 						</LLDASH>
+						<WebRTC>
+							<Timeout>30000</Timeout>
+							<Rtx>true</Rtx>
+							<Ulpfec>true</Ulpfec>
+						</WebRTC>
 					</Publishers>
 				</Application>
 			</Applications>
