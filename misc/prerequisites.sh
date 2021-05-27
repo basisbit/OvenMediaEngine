@@ -16,11 +16,16 @@ NASM_VERSION=2.15.02
 FFMPEG_VERSION=4.3.2
 JEMALLOC_VERSION=5.2.1
 PCRE2_VERSION=10.35
+# Support to Intel QuickSync hardware accelerator
 LIBVA_VERSION=2.11.0
-GMMLIB_VERSION=21.1.1
-INTEL_MEDIA_DRIVER_VERSION=21.1.3
-INTEL_MEDIA_SDK_VERSION=21.1.3
+GMMLIB_VERSION=20.4.1
+INTEL_MEDIA_DRIVER_VERSION=20.4.5
+INTEL_MEDIA_SDK_VERSION=20.5.1
+# Support to NVIDIA hardware accelerator
+NVCC_HEADERS=11.0.10.1
 
+ENABLE_QSV_HWACCELS=true
+ENABLE_NVCC_HWACCELS=false
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     NCPU=$(sysctl -n hw.ncpu)
@@ -176,16 +181,38 @@ install_ffmpeg()
     #  --enable-debug \
     #  --disable-optimizations --disable-mmx --disable-stripping \
 
+    ADDI_LIBS=""
+    ADDI_ENCODER=""
+    ADDI_DECODER=""
+    ADDI_CFLAGS=""
+    ADDI_LDFLAGS=""
+    ADDI_HWACCEL=""
+
+    if [ "$ENABLE_QSV_HWACCELS" = true ] ; then
+        ADDI_LIBS+=" --enable-libmfx"
+        ADDI_ENCODER+=",h264_qsv,hevc_qsv"
+        ADDI_DECODER+=",vp8_qsv,h264_qsv,hevc_qsv"
+    fi
+
+    if [ "$ENABLE_NVCC_HWACCELS" = true ] ; then
+        ADDI_LIBS+=" --enable-cuda-nvcc --enable-libnpp"
+        ADDI_ENCODER+=",h264_nvenc,hevc_nvenc"
+        ADDI_DECODER+=""
+        ADDI_CFLAGS+="-I/usr/local/cuda/include"
+        ADDI_LDFLAGS="-L/usr/local/cuda/lib64"
+        ADDI_HWACCEL="h264_nvdec,hevc_nvdec"
+    fi
+
     (DIR=${TEMP_PATH}/ffmpeg && \
     mkdir -p ${DIR} && \
     cd ${DIR} && \
     curl -sLf https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz | tar -xz --strip-components=1 && \
-    PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH} ./configure \
+    PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH} ./configure \
     --prefix="${PREFIX}" \
     --enable-gpl \
     --enable-nonfree \
-    --extra-cflags="-I${PREFIX}/include"  \
-    --extra-ldflags="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib" \
+    --extra-cflags="-I${PREFIX}/include ${ADDI_CFLAGS}"  \
+    --extra-ldflags="-L${PREFIX}/lib ${ADDI_LDFLAGS} -Wl,-rpath,${PREFIX}/lib" \
     --extra-libs=-ldl \
     --enable-shared \
     --disable-static \
@@ -193,11 +220,12 @@ install_ffmpeg()
     --disable-doc \
     --disable-programs  \
     --disable-avdevice --disable-dct --disable-dwt --disable-lsp --disable-lzo --disable-rdft --disable-faan --disable-pixelutils \
-    --enable-zlib --enable-libopus --enable-libvpx --enable-libfdk_aac --enable-libx264 --enable-libx265 --enable-libmfx \
+    --enable-zlib --enable-libopus --enable-libvpx --enable-libfdk_aac --enable-libx264 --enable-libx265 ${ADDI_LIBS} \
     --disable-everything \
     --disable-fast-unaligned \
-    --enable-encoder=libvpx_vp8,libvpx_vp9,libopus,libfdk_aac,libx264,h264_qsv,libx265,hevc_qsv,mjpeg,png \
-    --enable-decoder=aac,aac_latm,aac_fixed,h264,h264_qsv,hevc,hevc_qsv,opus,vp8,vp8_qsv \
+    --enable-hwaccel=${ADDI_HWACCEL}  \
+    --enable-encoder=libvpx_vp8,libopus,libfdk_aac,libx264,libx265,mjpeg,png${ADDI_ENCODER} \
+    --enable-decoder=aac,aac_latm,aac_fixed,h264,hevc,opus,vp8${ADDI_DECODER} \
     --enable-parser=aac,aac_latm,aac_fixed,h264,hevc,opus,vp8 \
     --enable-network --enable-protocol=tcp --enable-protocol=udp --enable-protocol=rtp,file,rtmp --enable-demuxer=rtsp --enable-muxer=mp4,webm,mpegts,flv,mpjpeg \
     --enable-filter=asetnsamples,aresample,aformat,channelmap,channelsplit,scale,transpose,fps,settb,asettb,format && \
@@ -305,12 +333,44 @@ install_intel_media_sdk() {
     rm -rf ${DIR}) || fail_exit "intel_media_sdk"   
 }
 
+install_nvidia_driver() {
+    add-apt-repository ppa:graphics-drivers/ppa
+    apt update
+    apt install nvidia-driver-460 nvidia-cuda-toolkit
+}
+
+install_nvcc_headers() {
+    (DIR=${TEMP_PATH}/gmmlib && \
+    mkdir -p ${DIR} && \
+    cd ${DIR} && \
+    curl -sLf https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCC_HEADERS}/nv-codec-headers-${NVCC_HEADERS}.tar.gz | tar -xz --strip-components=1 && \
+    sudo make install && \
+    rm -rf ${DIR}) || fail_exit "nvcc_headers"        
+}
+
+# Reboot is required after library installation
+install_nvcc() {
+    if [ "$ENABLE_NVCC_HWACCELS" = true ] ; then
+        install_nvidia_driver
+        install_nvcc_headers
+    fi
+}
+
+install_qsv() {
+    if [ "$ENABLE_QSV_HWACCELS" = true ] ; then
+        install_libva
+        install_gmmlib
+        install_intel_media_driver
+        install_intel_media_sdk
+    fi
+}
+
 install_base_ubuntu()
 {
     sudo apt install -y build-essential autoconf libtool zlib1g-dev tclsh cmake curl pkg-config bc
     
     # Dependency library for hardware accelerators
-    sudo apt install -y libdrm-dev
+    sudo apt install -y libdrm-dev xorg xorg-dev openbox libx11-dev libgl1-mesa-glx libgl1-mesa-dev
 }
 
 install_base_fedora()
@@ -320,14 +380,24 @@ install_base_fedora()
 
 install_base_centos()
 {
-    # centos-release-scl should be installed before installing devtoolset-7
-    sudo yum install -y centos-release-scl
-    sudo yum install -y bc gcc-c++ cmake autoconf libtool glibc-static tcl bzip2 zlib-devel devtoolset-7 
+    if [[ "${OSVERSION}" == "7" ]]; then
+        # centos-release-scl should be installed before installing devtoolset-7
+        sudo yum install -y centos-release-scl
+        sudo yum install -y glibc-static devtoolset-7
 
-    # Dependency library for hardware accelerators
-    sudo yum install libdrm-devel
+        # Centos 7 uses the 2.8.x version of cmake by default. It must be changed to version 3.x or higher.
+        sudo yum remove -y cmake
+        sudo yum install -y cmake3
+        sudo ln -s /usr/bin/cmake3 /usr/bin/cmake
+        source scl_source enable devtoolset-7
+    else
+        sudo yum install -y cmake    
+    fi
 
-    source scl_source enable devtoolset-7
+    sudo yum install -y bc gcc-c++ autoconf libtool tcl bzip2 zlib-devel 
+
+    # Dependency library for hardware accelerator
+    sudo yum install -y libdrm-devel libX11-devel libXi-devel
 }
 
 install_base_macos()
@@ -369,7 +439,7 @@ check_version()
         proceed_yn
     fi
 
-    if [[ "${OSNAME}" == "CentOS" && "${OSVERSION}" != "7" ]]; then
+    if [[ "${OSNAME}" == "CentOS" && "${OSVERSION}" != "7" && "${OSVERSION}" != "8" ]]; then
         proceed_yn
     fi
 
@@ -380,7 +450,7 @@ check_version()
 
 proceed_yn()
 {
-    read -p "This program [$0] is tested on [Ubuntu 18/20.04, CentOS 7, Fedora 28]
+    read -p "This program [$0] is tested on [Ubuntu 18/20.04, CentOS 7/8 q, Fedora 28]
 Do you want to continue [y/N] ? " ANS
     if [[ "${ANS}" != "y" && "$ANS" != "yes" ]]; then
         cd ${CURRENT}
@@ -408,7 +478,7 @@ done
 
 if [ "${OSNAME}" == "Ubuntu" ]; then
     check_version
-    install_base_ubuntu
+    # install_base_ubuntu
 elif  [ "${OSNAME}" == "CentOS" ]; then
     check_version
     install_base_centos
@@ -432,10 +502,8 @@ install_libx264
 install_libx265
 install_libvpx
 install_fdk_aac
-install_libva
-install_gmmlib
-install_intel_media_driver
-install_intel_media_sdk
+install_qsv
+install_nvcc
 install_ffmpeg
 install_jemalloc
 install_libpcre2

@@ -7,7 +7,6 @@
 //
 //==============================================================================
 #include "transcoder_gpu.h"
-
 #include "transcoder_private.h"
 
 TranscodeGPU::TranscodeGPU()
