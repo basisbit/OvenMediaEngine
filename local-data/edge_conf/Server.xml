@@ -23,7 +23,7 @@
 			</DASH>
 			<WebRTC>
 				<Signalling>
-					<TLSPort>env:OME_SIGNALLING_PORT:3334</TLSPort>
+					<TLSPort>${env:OME_SIGNALLING_PORT:3334}</TLSPort>
 				</Signalling>
 				<IceCandidates>
 					<TcpRelay>${env:OME_TCP_RELAY_ADDRESS:*:3478}</TcpRelay>
