@@ -65,6 +65,8 @@ int main(int argc, char *argv[])
 	auto server_config = cfg::ConfigManager::GetInstance()->GetServer();
 	auto orchestrator = ocst::Orchestrator::GetInstance();
 	auto monitor = mon::Monitoring::GetInstance();
+	monitor->OnServerStarted(server_config->GetName(), server_config->GetID());
+	logti("Server ID : %s", server_config->GetID().CStr());
 
 	// Get public IP
 	bool stun_server_parsed;
@@ -94,7 +96,7 @@ int main(int argc, char *argv[])
 
 			if (item == vhost_map.end())
 			{
-				host_info_list.emplace_back(host);
+				host_info_list.emplace_back(info::Host(server_config->GetName(), server_config->GetID(), host));
 				vhost_map[host.GetName()] = true;
 			}
 			else

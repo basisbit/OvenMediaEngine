@@ -196,17 +196,22 @@ namespace pvd
 			return nullptr;
 		}
 
-		std::shared_ptr<const SignedPolicy> signed_policy;
-		auto signed_policy_result = HandleSignedPolicy(parsed_url, remote_address, signed_policy);
-		if(signed_policy_result == CheckSignatureResult::Off || signed_policy_result == CheckSignatureResult::Pass)
+		// PORT can be omitted if port is rtmp default port, but SignedPolicy requires this information.
+		if(parsed_url->Port() == 0)
+		{
+			parsed_url->SetPort(request->GetRemote()->GetLocalAddress()->Port());
+		}
+
+		auto [signed_policy_result, signed_policy] = VerifyBySignedPolicy(parsed_url, remote_address);
+		if(signed_policy_result == AccessController::VerificationResult::Off || signed_policy_result == AccessController::VerificationResult::Pass)
 		{
 			// Success
 		}
-		else if(signed_policy_result == CheckSignatureResult::Error)
+		else if(signed_policy_result == AccessController::VerificationResult::Error)
 		{
 			return nullptr;
 		}
-		else if(signed_policy_result == CheckSignatureResult::Fail)
+		else if(signed_policy_result == AccessController::VerificationResult::Fail)
 		{
 			logtw("%s", signed_policy->GetErrMessage().CStr());
 			return nullptr;
@@ -267,22 +272,27 @@ namespace pvd
 			return false;
 		}
 
+		// PORT can be omitted if port is rtmp default port, but SignedPolicy requires this information.
+		if(parsed_url->Port() == 0)
+		{
+			parsed_url->SetPort(request->GetRemote()->GetLocalAddress()->Port());
+		}
+
 		uint64_t life_time = 0;
-		std::shared_ptr<const SignedPolicy> signed_policy;
-		auto signed_policy_result = HandleSignedPolicy(parsed_url, remote_address, signed_policy);
-		if(signed_policy_result == CheckSignatureResult::Off)
+		auto [signed_policy_result, signed_policy] = VerifyBySignedPolicy(parsed_url, remote_address);
+		if(signed_policy_result == AccessController::VerificationResult::Off)
 		{
 			// Success
 		}
-		else if(signed_policy_result == CheckSignatureResult::Pass)
+		else if(signed_policy_result == AccessController::VerificationResult::Pass)
 		{
 			life_time = signed_policy->GetStreamExpireEpochMSec();
 		}
-		else if(signed_policy_result == CheckSignatureResult::Error)
+		else if(signed_policy_result == AccessController::VerificationResult::Error)
 		{
 			return false;
 		}
-		else if(signed_policy_result == CheckSignatureResult::Fail)
+		else if(signed_policy_result == AccessController::VerificationResult::Fail)
 		{
 			logtw("%s", signed_policy->GetErrMessage().CStr());
 			return false;

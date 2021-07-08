@@ -47,7 +47,6 @@ bool EncoderAVC::Configure(std::shared_ptr<TranscodeContext> context)
 	}
 
 	_context->framerate = ::av_d2q(_output_context->GetFrameRate(), AV_TIME_BASE);
-
 	_context->bit_rate = _output_context->GetBitrate();
 	_context->rc_min_rate = _context->bit_rate;
 	_context->rc_max_rate = _context->bit_rate;
@@ -64,8 +63,7 @@ bool EncoderAVC::Configure(std::shared_ptr<TranscodeContext> context)
 	// For fixed-fps content, timebase should be 1/framerate and timestamp increments should be identically 1.
 	// This often, but not always is the inverse of the frame rate or field rate for video. 1/time_base is not the average frame rate if the frame rate is not constant.
 
-	AVRational codec_timebase = ::av_inv_q(::av_mul_q(::av_d2q(_output_context->GetFrameRate(), AV_TIME_BASE), (AVRational){_context->ticks_per_frame, 1}));
-	_context->time_base = codec_timebase;
+	_context->time_base = ::av_inv_q(::av_mul_q(::av_d2q(_output_context->GetFrameRate(), AV_TIME_BASE), (AVRational){_context->ticks_per_frame, 1}));
 	_context->gop_size = _context->framerate.num / _context->framerate.den;
 	_context->max_b_frames = 0;
 	_context->pix_fmt = (AVPixelFormat)GetPixelFormat();
@@ -73,22 +71,16 @@ bool EncoderAVC::Configure(std::shared_ptr<TranscodeContext> context)
 	_context->height = _output_context->GetVideoHeight();
 	_context->thread_count = 2;
 
-	// 인코딩 품질 및 브라우저 호환성
 	// For browser compatibility
 	// _context->profile = FF_PROFILE_H264_MAIN;
 	_context->profile = FF_PROFILE_H264_BASELINE;
-
-	// 인코딩 성능
 	::av_opt_set(_context->priv_data, "preset", "ultrafast", 0);
-
-	// 인코딩 딜레이
 	::av_opt_set(_context->priv_data, "tune", "zerolatency", 0);
 
-	// 인코딩 딜레이에서 sliced-thread 옵션 제거. MAC 환경에서 브라우저 호환성
+	// Remove the sliced-thread option from encoding delay. Browser compatibility in MAC environment
 	::av_opt_set(_context->priv_data, "x264opts", "bframes=0:sliced-threads=0:b-adapt=1:no-scenecut:keyint=30:min-keyint=30", 0);
-	// ::av_opt_set(_context->priv_data, "x264opts", "bframes=0:sliced-threads=0:b-adapt=1", 0);
 
-	// CBR 옵션 / bitrate는 kbps 단위 / *문제는 MAC 크롬에서 재생이 안된다. 그래서 maxrate 값만 지정해줌.
+	// CBR option /bitrate in kbps / *problem is not playing in MAC Chrome. So I only specify the maxrate value.
 	// x264opts.AppendFormat(":nal-hrd=cbr:force-cfr=1:bitrate=%d:vbv-maxrate=%d:vbv-bufsize=%d:", _context->bit_rate/1000,  _context->bit_rate/1000,  _context->bit_rate/1000);
 
 	if (::avcodec_open2(_context, codec, nullptr) < 0)
@@ -107,9 +99,10 @@ bool EncoderAVC::Configure(std::shared_ptr<TranscodeContext> context)
 	}
 	catch (const std::system_error &e)
 	{
+		logte("Failed to start encoder thread.");
 		_kill_flag = true;
 
-		logte("Failed to start transcode stream thread.");
+		return false;
 	}
 
 	return true;
@@ -121,7 +114,7 @@ void EncoderAVC::Stop()
 
 	_input_buffer.Stop();
 	_output_buffer.Stop();
-	
+
 	if (_thread_work.joinable())
 	{
 		_thread_work.join();
@@ -158,14 +151,12 @@ void EncoderAVC::ThreadEncode()
 		if (::av_frame_get_buffer(_frame, 32) < 0)
 		{
 			logte("Could not allocate the video frame data");
-			// *result = TranscodeResult::DataError;
 			break;
 		}
 
 		if (::av_frame_make_writable(_frame) < 0)
 		{
 			logte("Could not make sure the frame data is writable");
-			// *result = TranscodeResult::DataError;
 			break;
 		}
 
@@ -174,15 +165,11 @@ void EncoderAVC::ThreadEncode()
 		::memcpy(_frame->data[2], frame->GetBuffer(2), frame->GetBufferSize(2));
 
 		int ret = ::avcodec_send_frame(_context, _frame);
-		// int ret = 0;
 		::av_frame_unref(_frame);
 
 		if (ret < 0)
 		{
 			logte("Error sending a frame for encoding : %d", ret);
-
-			// Failure to send frame to encoder. Wait and put it back in. But it doesn't happen as often as possible.
-			// _input_buffer.Enqueue(std::move(frame));
 		}
 
 		///////////////////////////////////////////////////
@@ -196,9 +183,6 @@ void EncoderAVC::ThreadEncode()
 			if (ret == AVERROR(EAGAIN))
 			{
 				// More packets are needed for encoding.
-
-				// logte("Error receiving a packet for decoding : EAGAIN");
-
 				break;
 			}
 			else if (ret == AVERROR_EOF)

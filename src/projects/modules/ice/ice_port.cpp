@@ -604,6 +604,20 @@ void IcePort::OnStunPacketReceived(const std::shared_ptr<ov::Socket> &remote, co
 
 	logtd("Received message:\n%s", message.ToString().CStr());
 
+	if(message.GetClass() == StunClass::ErrorResponse)
+	{
+		// Print
+		auto error_code = message.GetAttribute<StunErrorCodeAttribute>(StunAttributeType::ErrorCode);
+		if(error_code == nullptr)
+		{
+			logtw("Received stun error response, but there is no ErrorCode attribute");
+		}
+		else
+		{
+			logtw("Received stun error response (Error code : %d Reason : %s)", error_code->GetErrorCodeNumber(), error_code->GetErrorReason().CStr());
+		}
+	}
+
 	switch(message.GetMethod())
 	{
 		// STUN
@@ -619,7 +633,7 @@ void IcePort::OnStunPacketReceived(const std::shared_ptr<ov::Socket> &remote, co
 					ProcessStunBindingResponse(remote, address, gate_info, message);
 					break;
 				case StunClass::ErrorResponse:
-					// Nothing to do
+					//TODO(Getroot): Delete the transaction immediately. 
 					break;
 			}
 			break;
@@ -679,7 +693,7 @@ bool IcePort::ProcessStunBindingRequest(const std::shared_ptr<ov::Socket> &remot
 		return false;
 	}
 
-	logtd("[From Client %s] Received STUN binding request: %s:%s", address.ToString().CStr(), local_ufrag.CStr(), remote_ufrag.CStr());
+	logtd("[From %s To %s] Received STUN binding request: %s:%s", address.ToString().CStr(), remote->GetLocalAddress()->ToString().CStr(), local_ufrag.CStr(), remote_ufrag.CStr());
 
 	
 	std::shared_ptr<IcePortInfo> ice_port_info;
@@ -729,7 +743,7 @@ bool IcePort::ProcessStunBindingRequest(const std::shared_ptr<ov::Socket> &remot
 	{
 		if(ice_port_info->address != address)
 		{
-			logtd("Ignore Stun Binding Request from(%s) because the ice port is already connected with (%s)", address.ToString().CStr(), ice_port_info->address.ToString().CStr());
+			logti("Ignore Stun Binding Request from(%s) because the ice port is already connected with (%s)", address.ToString().CStr(), ice_port_info->address.ToString().CStr());
 			return false;
 		}
 	}
@@ -793,24 +807,25 @@ bool IcePort::SendStunBindingRequest(const std::shared_ptr<ov::Socket> &remote, 
 	user_name_attribute->SetText(ov::String::FormatString("%s:%s", info->peer_sdp->GetIceUfrag().CStr(), info->offer_sdp->GetIceUfrag().CStr()));
 	message.AddAttribute(std::move(attribute));
 
-	// Unknown attribute (for testing hash)
-	StunUnknownAttribute *unknown_attribute = nullptr;
-	// https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
-	// https://www.ietf.org/mail-archive/web/ice/current/msg00247.html
-	// attribute = std::make_shared<StunUnknownAttribute>(0xC057, 4);
-	// auto *unknown_attribute = dynamic_cast<StunUnknownAttribute *>(attribute.get());
-	// uint8_t unknown_data[] = { 0x00, 0x02, 0x00, 0x00 };
-	// unknown_attribute->SetData(&(unknown_data[0]), 4);
-	// message.AddAttribute(std::move(attribute));
+	// ICE-CONTROLLED
+	//attribute = std::make_shared<StunUnknownAttribute>(0x8029, 8);
+	// ICE-CONTROLLING 
+	attribute = std::make_shared<StunUnknownAttribute>(0x802A, 8);
+	auto *tie_break_attribute = dynamic_cast<StunUnknownAttribute *>(attribute.get());
 
-	// ICE-CONTROLLED (for testing hash)
-	attribute = std::make_shared<StunUnknownAttribute>(0x8029, 8);
-	unknown_attribute = dynamic_cast<StunUnknownAttribute *>(attribute.get());
-	uint8_t unknown_data2[] = {0x1C, 0xF5, 0x1E, 0xB1, 0xB0, 0xCB, 0xE3, 0x49};
-	unknown_attribute->SetData(&(unknown_data2[0]), 8);
+	/*
+	https://datatracker.ietf.org/doc/html/rfc5245#section-7.2.1.1
+	If the agent's tie-breaker is less than the contents of the
+    ICE-CONTROLLING attribute, the agent switches to the controlled role.
+	*/
+	//uint8_t tie_break_value[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	uint8_t tie_break_value[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
+	
+	tie_break_attribute->SetData(&(tie_break_value[0]), 8);
 	message.AddAttribute(std::move(attribute));
 
 	// USE-CANDIDATE (for testing hash)
+	StunUnknownAttribute *unknown_attribute = nullptr;
 	attribute = std::make_shared<StunUnknownAttribute>(0x0025, 0);
 	unknown_attribute = dynamic_cast<StunUnknownAttribute *>(attribute.get());
 	message.AddAttribute(std::move(attribute));
@@ -902,7 +917,7 @@ bool IcePort::ProcessStunBindingResponse(const std::shared_ptr<ov::Socket> &remo
 
 		if (_session_port_table.find(ice_port_info->session_id) == _session_port_table.end())
 		{
-			logtd("Add the client to the port list: %s", address.ToString().CStr());
+			logti("Add the client to the port list: %s", address.ToString().CStr());
 
 			_address_port_table[address] = ice_port_info;
 			_session_port_table[ice_port_info->session_id] = ice_port_info;

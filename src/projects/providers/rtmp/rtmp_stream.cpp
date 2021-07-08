@@ -9,6 +9,7 @@
 
 #include "rtmp_stream.h"
 #include "base/info/application.h"
+#include "base/provider/push_provider/provider.h"
 #include "base/provider/push_provider/application.h"
 #include "rtmp_provider_private.h"
 
@@ -305,29 +306,66 @@ namespace pvd
 		}
 	}
 
-	bool RtmpStream::CheckSignedPolicy()
+	bool RtmpStream::CheckAccessControl()
 	{
 		// Check SignedPolicy
 		
-		auto result = HandleSignedPolicy(_url, _remote->GetRemoteAddress(), _signed_policy);
-		if(result == CheckSignatureResult::Off)
+		auto [result, _signed_policy] = GetProvider()->VerifyBySignedPolicy(_url, _remote->GetRemoteAddress());
+		if(result == AccessController::VerificationResult::Off)
 		{
-			return true;
 		}
-		else if(result == CheckSignatureResult::Pass)
+		else if(result == AccessController::VerificationResult::Pass)
 		{
 			_stream_expired_msec = _signed_policy->GetStreamExpireEpochMSec();
-			return true;
 		}
-		else if(result == CheckSignatureResult::Error)
+		else if(result == AccessController::VerificationResult::Error)
 		{
 			logtw("SingedPolicy error : %s", _url->ToUrlString().CStr());
 			Stop();
 			return false;
 		}
-		else if(result == CheckSignatureResult::Fail)
+		else if(result == AccessController::VerificationResult::Fail)
 		{
 			logtw("%s", _signed_policy->GetErrMessage().CStr());
+			Stop();
+			return false;
+		}
+
+		auto [webhooks_result, _admission_webhooks] = GetProvider()->VerifyByAdmissionWebhooks(_url, _remote->GetRemoteAddress());
+		if(webhooks_result == AccessController::VerificationResult::Off)
+		{
+			return true;
+		}
+		else if(webhooks_result == AccessController::VerificationResult::Pass)
+		{
+			// Lifetime
+			if(_admission_webhooks->GetLifetime() != 0)
+			{
+				// Choice smaller value
+				auto stream_expired_msec_from_webhooks = ov::Clock::NowMSec() + _admission_webhooks->GetLifetime();
+				if(stream_expired_msec_from_webhooks < _stream_expired_msec)
+				{
+					_stream_expired_msec = stream_expired_msec_from_webhooks;
+				}
+			}
+
+			// Redirect URL
+			if(_admission_webhooks->GetNewURL() != nullptr)
+			{
+				_publish_url = _admission_webhooks->GetNewURL();
+			}
+
+			return true;
+		}
+		else if(webhooks_result == AccessController::VerificationResult::Error)
+		{
+			logtw("AdmissionWebhooks error : %s", _url->ToUrlString().CStr());
+			Stop();
+			return false;
+		}
+		else if(webhooks_result == AccessController::VerificationResult::Fail)
+		{
+			logtw("%s", _admission_webhooks->GetErrReason().CStr());
 			Stop();
 			return false;
 		}
@@ -348,18 +386,8 @@ namespace pvd
 			}
 			
 			_full_url.Format("%s/%s", _tc_url.CStr(), document.GetProperty(3)->GetString());
-			
-			_url = ov::Url::Parse(_full_url);
-			// PORT can be omitted if port is rtmp default port(1935), but SignedPolicy requires this information.
-			if(_url->Port() == 0)
-			{
-				_url->SetPort(_remote->GetLocalAddress()->Port());
-			}
-
-			_stream_name = _url->Stream();
-			_import_chunk->SetStreamName(_stream_name);
-
-			CheckSignedPolicy();
+			SetFullUrl(_full_url);
+			CheckAccessControl();
 		}
 	}
 
@@ -370,18 +398,8 @@ namespace pvd
 			if (document.GetProperty(3) != nullptr && document.GetProperty(3)->GetType() == AmfDataType::String)
 			{
 				_full_url.Format("%s/%s", _tc_url.CStr(), document.GetProperty(3)->GetString());
-			
-				_url = ov::Url::Parse(_full_url);
-				// PORT can be omitted (1935), but SignedPolicy requires this information.
-				if(_url->Port() == 0)
-				{
-					_url->SetPort(_remote->GetLocalAddress()->Port());
-				}
-
-				_stream_name = _url->Stream();
-				_import_chunk->SetStreamName(_stream_name);
-
-				CheckSignedPolicy();
+				SetFullUrl(_full_url);
+				CheckAccessControl();
 			}
 			else
 			{
@@ -418,6 +436,22 @@ namespace pvd
 			logte("SendAmfOnStatus Fail");
 			return;
 		}
+	}
+
+	bool RtmpStream::SetFullUrl(ov::String url)
+	{
+		_url = ov::Url::Parse(url);
+		// PORT can be omitted (1935), but SignedPolicy requires this information.
+		if(_url->Port() == 0)
+		{
+			_url->SetPort(_remote->GetLocalAddress()->Port());
+		}
+
+		_publish_url = _url;
+		_stream_name = _url->Stream();
+		_import_chunk->SetStreamName(_stream_name);
+
+		return true;
 	}
 
 	bool RtmpStream::OnAmfMetaData(const std::shared_ptr<const RtmpChunkHeader> &header, AmfDocument &document, int32_t object_index)
@@ -820,24 +854,27 @@ namespace pvd
 				break;
 			}
 
-			bool bSuccess = true;
+			bool result = true;
 
 			switch (message->header->completed.type_id)
 			{
 				case RTMP_MSGID_AUDIO_MESSAGE:
-					bSuccess = ReceiveAudioMessage(message);
+					result = ReceiveAudioMessage(message);
 					break;
 				case RTMP_MSGID_VIDEO_MESSAGE:
-					bSuccess = ReceiveVideoMessage(message);
+					result = ReceiveVideoMessage(message);
 					break;
 				case RTMP_MSGID_SET_CHUNK_SIZE:
-					bSuccess = ReceiveSetChunkSize(message);
+					result = ReceiveSetChunkSize(message);
 					break;
 				case RTMP_MSGID_AMF0_DATA_MESSAGE:
 					ReceiveAmfDataMessage(message);
 					break;
 				case RTMP_MSGID_AMF0_COMMAND_MESSAGE:
 					ReceiveAmfCommandMessage(message);
+					break;
+				case RTMP_MSGID_USER_CONTROL_MESSAGE:
+					result = ReceiveUserControlMessage(message);
 					break;
 				case RTMP_MSGID_WINDOWACKNOWLEDGEMENT_SIZE:
 					ReceiveWindowAcknowledgementSize(message);
@@ -847,7 +884,7 @@ namespace pvd
 					break;
 			}
 
-			if (!bSuccess)
+			if (!result)
 			{
 				return false;
 			}
@@ -868,6 +905,72 @@ namespace pvd
 
 		_import_chunk->SetChunkSize(chunk_size);
 		logtd("Set Receive ChunkSize(%u)", chunk_size);
+
+		return true;
+	}
+
+	bool RtmpStream::ReceiveUserControlMessage(const std::shared_ptr<const RtmpMessage> &message)
+	{
+		auto data = message->payload;
+
+		// RTMP Spec. v1.0 - 6.2. User Control Messages
+		//
+		// User Control messages SHOULD use message stream ID 0 (known as the
+		// control stream) and, when sent over RTMP Chunk Stream, be sent on
+		// chunk stream ID 2. 
+		auto message_stream_id = message->header->completed.stream_id;
+		auto chunk_stream_id = message->header->basic_header.stream_id;
+		if(
+			(message_stream_id != 0) ||
+			(chunk_stream_id != 2)
+		)
+		{
+			logte("Invalid id (message stream id: %u, chunk stream id: %u)", message_stream_id, chunk_stream_id);
+			return false;
+		}
+
+		if(data->GetLength() < 2)
+		{
+			logte("Invalid user control message size (data length must greater than 2 bytes, but %zu)", data->GetLength());
+			return false;
+		}
+
+		ov::ByteStream byte_stream(data);
+
+		auto type = byte_stream.ReadBE16();
+
+		switch (type)
+		{
+			case RTMP_UCMID_PINGREQUEST: {
+				if(data->GetLength() != 6)
+				{
+					logte("Invalid ping message size: %zu", data->GetLength());
+					return false;
+				}
+
+				// +---------------+--------------------------------------------------+
+				// | PingResponse  | The client sends this event to the server in     |
+				// | (=7)          | response to the ping request. The event data is  |
+				// |               | a 4-byte timestamp, which was received with the  |
+				// |               | PingRequest request.                             |
+				// +---------------+--------------------------------------------------+
+				// ping response == event type (16 bits) + timestamp (32 bits)
+				auto body = std::make_shared<std::vector<uint8_t>>(2 + 4);
+				auto write_buffer = body->data();
+				auto message_header = std::make_shared<RtmpMuxMessageHeader>(
+					chunk_stream_id,
+					0,
+					RTMP_MSGID_USER_CONTROL_MESSAGE,
+					message_stream_id,
+					6);
+
+				*(reinterpret_cast<uint16_t *>(write_buffer)) = ov::HostToBE16(RTMP_UCMID_PINGRESPONSE);
+				write_buffer += sizeof(uint16_t);
+				*(reinterpret_cast<uint32_t *>(write_buffer)) = ov::HostToBE32(byte_stream.ReadBE32());
+
+				return SendMessagePacket(message_header, body);
+			}
+		}
 
 		return true;
 	}
@@ -931,11 +1034,9 @@ namespace pvd
 		}
 		else if (message_name == RTMP_CMD_NAME_RELEASESTREAM)
 		{
-			;
 		}
 		else if (message_name == RTMP_PING)
 		{
-			;
 		}
 		else if (message_name == RTMP_CMD_NAME_DELETESTREAM)
 		{
@@ -1306,18 +1407,20 @@ namespace pvd
 
 	bool RtmpStream::PublishStream()
 	{
-		if(_stream_name.IsEmpty())
+		if(_publish_url == nullptr)
 		{
 			return false;
 		}
 
-		SetName(_stream_name);
+		SetName(_publish_url->Stream());
 
 		// Set Track Info
 		SetTrackInfo(_media_info);
+	
+		auto vhost_app_name = ocst::Orchestrator::GetInstance()->ResolveApplicationNameFromDomain(_publish_url->Host(), _publish_url->App());
 
 		// Publish
-		if(PublishChannel(_vhost_app_name) == false)
+		if(PublishChannel(vhost_app_name) == false)
 		{
 			Stop();
 			return false;
@@ -1573,7 +1676,7 @@ namespace pvd
 		auto message_header = std::make_shared<RtmpMuxMessageHeader>(chunk_stream_id,
 																	0,
 																	RTMP_MSGID_AMF0_COMMAND_MESSAGE,
-																	_rtmp_stream_id,
+																	0,
 																	0);
 		AmfDocument document;
 		AmfObject *object = nullptr;

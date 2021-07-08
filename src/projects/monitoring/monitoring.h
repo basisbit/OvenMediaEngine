@@ -29,6 +29,7 @@ namespace mon
 
 		void ShowInfo();
 
+		void OnServerStarted(ov::String server_name, ov::String server_id);
 		bool OnHostCreated(const info::Host &host_info);
 		bool OnHostDeleted(const info::Host &host_info);
 		bool OnApplicationCreated(const info::Application &app_info);
@@ -43,6 +44,8 @@ namespace mon
         std::shared_ptr<StreamMetrics>  GetStreamMetrics(const info::Stream &stream_info);
 
 	private:
+		ov::String _server_name;
+		ov::String _server_id;
 		std::shared_mutex _map_guard;
 		std::map<uint32_t, std::shared_ptr<HostMetrics>> _hosts;
 	};

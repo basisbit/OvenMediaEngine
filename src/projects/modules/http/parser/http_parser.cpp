@@ -12,27 +12,6 @@
 
 namespace http
 {
-#define HTTP_COMPARE_METHOD(text, value_if_matches) \
-	if (method == text)                             \
-	{                                               \
-		return value_if_matches;                    \
-	}
-
-	Method HttpParser::MethodFromString(const ov::String &method)
-	{
-		HTTP_COMPARE_METHOD("GET", Method::Get);
-		HTTP_COMPARE_METHOD("HEAD", Method::Head);
-		HTTP_COMPARE_METHOD("POST", Method::Post);
-		HTTP_COMPARE_METHOD("PUT", Method::Put);
-		HTTP_COMPARE_METHOD("DELETE", Method::Delete);
-		HTTP_COMPARE_METHOD("CONNECT", Method::Connect);
-		HTTP_COMPARE_METHOD("OPTIONS", Method::Options);
-		HTTP_COMPARE_METHOD("TRACE", Method::Trace);
-		HTTP_COMPARE_METHOD("PATCH", Method::Patch);
-
-		return Method::Unknown;
-	}
-
 	ssize_t HttpParser::ProcessData(const std::shared_ptr<const ov::Data> &data)
 	{
 		if (_is_header_found)
@@ -149,23 +128,8 @@ namespace http
 			logtd("\t>> %s: %s", pair.first.CStr(), pair.second.CStr());
 		});
 
-		switch (GetMethod())
-		{
-			case Method::Get:
-				// GET has no HTTP body
-				_content_length = 0L;
-				break;
-
-			case Method::Post:
-				// TODO(dimiden): Need to parse HTTP body if needed
-				_content_length = ov::Converter::ToInt64(GetHeader("CONTENT-LENGTH", "0"));
-				break;
-
-			default:
-				// Another method
-				_content_length = ov::Converter::ToInt64(GetHeader("CONTENT-LENGTH", "0"));
-				break;
-		}
+		_has_content_length = IsHeaderExists("CONTENT-LENGTH");
+		_content_length = ov::Converter::ToInt64(GetHeader("CONTENT-LENGTH", "0"));
 
 		return status_code;
 	}

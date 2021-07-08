@@ -10,7 +10,7 @@ namespace mon
 {
     ov::String ApplicationMetrics::GetInfoString(bool show_children)
     {
-        ov::String out_str = ov::String::FormatString("\n[Application Info]\nid(%u), name(%s)\nCreated Time (%s)\n", 														
+        ov::String out_str = ov::String::FormatString("\n[Application Info]\nid(%u), name(%s)\nCreated Time (%s)\n",
 														GetId(), GetName().CStr(),
 														ov::Converter::ToString(_created_time).CStr());
         
@@ -47,13 +47,13 @@ namespace mon
         auto stream_metrics = std::make_shared<StreamMetrics>(GetSharedPtr(), stream);
         if(stream_metrics == nullptr)
         {
-            logte("Cannot create StreamMetrics (%s/%s)", GetName().CStr(), stream.GetName().CStr());
+            logte("Cannot create StreamMetrics (%s/%s - %s)", GetName().CStr(), stream.GetName().CStr(), stream.GetUUID().CStr());
             return false;
         }
 
         _streams[stream.GetId()] = stream_metrics;
 
-        logti("Create StreamMetrics(%s) for monitoring", stream.GetName().CStr());
+        logti("Create StreamMetrics(%s/%s) for monitoring", stream.GetName().CStr(), stream.GetUUID().CStr());
         return true;
     }
 
@@ -65,7 +65,7 @@ namespace mon
             return false;
         }
 
-        logti("Delete StreamMetrics(%s) for monitoring", stream.GetName().CStr());
+        logti("Delete StreamMetrics(%s/%s) for monitoring", stream.GetName().CStr(), stream.GetUUID().CStr());
 
 
 		// If there are sessions in the stream, the number of visitors to the app is recalculated.
@@ -74,7 +74,9 @@ namespace mon
 		{
 			for(uint8_t type = static_cast<uint8_t>(PublisherType::Unknown); type < static_cast<uint8_t>(PublisherType::NumberOfPublishers); type++)
 			{
-				 OnSessionsDisconnected(static_cast<PublisherType>(type), stream_metric->GetConnections(static_cast<PublisherType>(type)));
+				// Forward value to HostMetrics to sum
+				GetHostMetrics()->OnSessionsDisconnected(static_cast<PublisherType>(type), stream_metric->GetConnections(static_cast<PublisherType>(type)));
+				OnSessionsDisconnected(static_cast<PublisherType>(type), stream_metric->GetConnections(static_cast<PublisherType>(type)));
 			}
 		}
 

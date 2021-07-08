@@ -5,6 +5,7 @@
 #include "monitoring.h"
 #include "monitoring_private.h"
 
+
 namespace mon
 {
 	void Monitoring::ShowInfo()
@@ -23,7 +24,14 @@ namespace mon
 			host.second->Release();
 		}
 	}
-	
+
+	void Monitoring::OnServerStarted(ov::String server_name, ov::String server_id)
+	{
+		_server_name = server_name;
+		_server_id = server_id;
+		logti("%s(%s) ServerMetric has been started for monitoring", _server_name.CStr(), _server_id.CStr());
+	}
+
 	bool Monitoring::OnHostCreated(const info::Host &host_info)
 	{
 		std::unique_lock<std::shared_mutex> lock(_map_guard);
@@ -34,13 +42,13 @@ namespace mon
 		auto host_metrics = std::make_shared<HostMetrics>(host_info);
 		if (host_metrics == nullptr)
 		{
-			logte("Cannot create HostMetrics (%s)", host_info.GetName().CStr());
+			logte("Cannot create HostMetrics (%s/%s)", host_info.GetName().CStr(), host_info.GetUUID().CStr());
 			return false;
 		}
 		
 		_hosts[host_info.GetId()] = host_metrics;
 
-		logti("Create HostMetrics(%s) for monitoring", host_info.GetName().CStr());
+		logti("Create HostMetrics(%s/%s) for monitoring", host_info.GetName().CStr(), host_info.GetUUID().CStr());
 		return true;
 	}
 	bool Monitoring::OnHostDeleted(const info::Host &host_info)
@@ -57,7 +65,7 @@ namespace mon
 		_hosts.erase(it);
 		host->Release();
 
-		logti("Delete HostMetrics(%s) for monitoring", host_info.GetName().CStr());
+		logti("Delete HostMetrics(%s/%s) for monitoring", host_info.GetName().CStr(), host_info.GetUUID().CStr());
 		return true;
 	}
 	bool Monitoring::OnApplicationCreated(const info::Application &app_info)

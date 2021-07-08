@@ -12,6 +12,12 @@
 #include "managers/managers.h"
 #include "p2p/p2p.h"
 #include "virtual_hosts/virtual_hosts.h"
+#include "base/ovlibrary/uuid.h"
+
+#include <fstream>
+
+#define SERVER_ID_STORAGE_FILE		"Server.id"
+
 namespace cfg
 {
 	enum class ServerType
@@ -27,6 +33,7 @@ namespace cfg
 		Attribute _version;
 
 		ov::String _name;
+		ov::String _id;
 
 		ov::String _typeName;
 		ServerType _type;
@@ -59,6 +66,16 @@ namespace cfg
 		CFG_DECLARE_REF_GETTER_OF(GetP2P, _p2p)
 
 		CFG_DECLARE_REF_GETTER_OF(GetVirtualHostList, _virtual_hosts.GetVirtualHostList())
+
+		ov::String GetID()
+		{
+			return _id;
+		}
+		// Set ID from external config file
+		void SetID(ov::String id)
+		{
+			_id = id;
+		}
 
 		// Deprecated - It has a bug
 		bool GetVirtualHostByName(ov::String name, cfg::vhost::VirtualHost &vhost) const
