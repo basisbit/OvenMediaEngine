@@ -30,6 +30,7 @@ services:
       dockerfile: ./Dockerfile
     restart: always
     ports:
+    - "80:80/tcp"
     - "443:443/tcp"
     - "3334:3334/tcp"
     - "3479:3479/tcp"

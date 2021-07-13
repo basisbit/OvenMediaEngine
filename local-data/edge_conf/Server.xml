@@ -16,11 +16,9 @@
 
 		<Publishers>
 			<HLS>
+				<Port>80</Port>
 				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
 			</HLS>
-			<DASH>
-				<TLSPort>${env:TLS_HTTP_PORT:8943}</TLSPort>
-			</DASH>
 			<WebRTC>
 				<Signalling>
 					<TLSPort>${env:OME_SIGNALLING_PORT:3334}</TLSPort>
@@ -130,7 +128,7 @@
 						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:4}</SessionLoadBalancingThreadCount>
 						<StreamLoadBalancingThreadCount>2</StreamLoadBalancingThreadCount>
 						<HLS>
-							<SegmentDuration>5</SegmentDuration>
+							<SegmentDuration>6</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
 							<CrossDomains>
 								<Url>*.brony.eu</Url>
@@ -138,15 +136,6 @@
 								<Url>pony.town</Url>
 							</CrossDomains>
 						</HLS>
-						<LLDASH>
-							<SegmentDuration>5</SegmentDuration>
-							<CrossDomains>
-								<Url>*.brony.eu</Url>
-								<Url>*.pony.town</Url>
-								<Url>pony.town</Url>
-							</CrossDomains>
-							<UTCTiming />
-						</LLDASH>
 						<WebRTC>
 							<Timeout>30000</Timeout>
 							<Rtx>true</Rtx>
