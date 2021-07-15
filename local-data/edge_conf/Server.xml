@@ -139,8 +139,8 @@
 						</HLS>
 						<WebRTC>
 							<Timeout>30000</Timeout>
-							<Rtx>true</Rtx>
-							<Ulpfec>true</Ulpfec>
+							<Rtx>false</Rtx>
+							<Ulpfec>false</Ulpfec>
 						</WebRTC>
 					</Publishers>
 				</Application>
