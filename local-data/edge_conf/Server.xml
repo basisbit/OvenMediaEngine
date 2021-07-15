@@ -27,6 +27,7 @@
 				<IceCandidates>
 					<TcpRelay>${PublicIP}:3478</TcpRelay>
 					<IceCandidate>${PublicIP}:10000-10005/udp</IceCandidate>
+					<TcpRelayWorkerCount>2</TcpRelayWorkerCount>
 				</IceCandidates>
 			</WebRTC>
 		</Publishers>
