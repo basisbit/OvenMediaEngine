@@ -19,6 +19,10 @@
 			<RTMP>
 				<Port>${env:OME_RTMP_PROV_PORT:1935}</Port>
 			</RTMP>
+                        <SRT>
+                                <Port>${env:OME_SRT_PROV_PORT:9999}</Port>
+                                <WorkerCount>2</WorkerCount>
+                        </SRT>
 		</Providers>
 
 		<Publishers>
@@ -71,6 +75,7 @@
 					<Type>live</Type>
 					<Providers>
 						<RTMP />
+						<SRT />
 					</Providers>
 					<OutputProfiles>
 						<OutputProfile>
