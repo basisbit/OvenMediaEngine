@@ -24,10 +24,6 @@ bool EncoderAAC::Configure(std::shared_ptr<TranscodeContext> output_context)
 
 	auto codec_id = GetCodecID();
 	AVCodec *codec = ::avcodec_find_encoder(codec_id);
-	// AVCodec *codec = ::avcodec_find_encoder_by_name("libfdk_aac");
-	// ffmpeg 호환성 문제로 libfdk_aac 라이브러리 downgrade 필요
-	// ffmpeg 빌드 옵션 : --enable-nonfree --enable-libfdk-aac --enable-encoder=libfdk_aac
-
 	if (codec == nullptr)
 	{
 		logte("Codec not found: %s (%d)", ::avcodec_get_name(codec_id), codec_id);
@@ -60,6 +56,8 @@ bool EncoderAAC::Configure(std::shared_ptr<TranscodeContext> output_context)
 		logte("Could not open codec: %s (%d)", ::avcodec_get_name(codec_id), codec_id);
 		return false;
 	}
+
+	output_context->SetAudioSamplesPerFrame(_context->frame_size);
 
 	// Generates a thread that reads and encodes frames in the input_buffer queue and places them in the output queue.
 	try

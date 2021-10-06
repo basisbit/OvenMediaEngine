@@ -9,11 +9,11 @@
 #pragma once
 
 #include "../common/host/host.h"
-#include "applications/applications.h"
-#include "origins/origins.h"
+#include "access_control/admission_webhooks.h"
 #include "access_control/signed_policy.h"
 #include "access_control/signed_token.h"
-#include "access_control/admission_webhooks.h"
+#include "applications/applications.h"
+#include "origins/origins.h"
 
 namespace cfg
 {
@@ -23,6 +23,7 @@ namespace cfg
 		{
 		protected:
 			ov::String _name;
+			ov::String _distribution = "ovenmediaengine.com";
 
 			cmn::Host _host;
 			sig::SignedPolicy _signed_policy;
@@ -33,6 +34,7 @@ namespace cfg
 
 		public:
 			CFG_DECLARE_REF_GETTER_OF(GetName, _name)
+			CFG_DECLARE_REF_GETTER_OF(GetDistribution, _distribution)
 
 			CFG_DECLARE_REF_GETTER_OF(GetHost, _host)
 
@@ -48,6 +50,7 @@ namespace cfg
 			void MakeList() override
 			{
 				Register("Name", &_name);
+				Register<Optional>("Distribution", &_distribution);
 
 				Register<Optional>("Host", &_host);
 
@@ -56,7 +59,7 @@ namespace cfg
 				Register<Optional>("AdmissionWebhooks", &_admission_webhooks);
 
 				Register<Optional>("Origins", &_origins);
-				Register<Optional>("Applications", &_applications);
+				Register<Optional>({"Applications", OmitRule::Omit}, &_applications);
 			}
 		};
 	}  // namespace vhost

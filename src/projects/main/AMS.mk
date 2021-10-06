@@ -19,6 +19,7 @@ LOCAL_STATIC_LIBRARIES := \
 	address_utilities \
 	ice \
 	api_server \
+	json_serdes \
 	bitstream \
 	containers \
 	http \
@@ -29,6 +30,7 @@ LOCAL_STATIC_LIBRARIES := \
 	web_console \
 	mediarouter \
 	rtsp_module \
+	jitter_buffer \
 	ovt_packetizer \
 	orchestrator \
 	publisher \
@@ -41,7 +43,6 @@ LOCAL_STATIC_LIBRARIES := \
 	ovlibrary \
 	monitoring \
 	jsoncpp \
-	sqlite \
 	file \
 	rtmp \
 

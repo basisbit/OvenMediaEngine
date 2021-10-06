@@ -18,7 +18,7 @@ namespace pub
 	{
 		_stop_thread_flag = false;
 		_worker_thread = std::thread(&ApplicationWorker::WorkerThread, this);
-		pthread_setname_np(_worker_thread.native_handle(), "AppWorker");
+		pthread_setname_np(_worker_thread.native_handle(), ov::String::FormatString("AW-%s%d", _worker_name.CStr(), _worker_id).CStr());
 
 		ov::String queue_name;
 
@@ -168,7 +168,7 @@ namespace pub
 
 	bool Application::Start()
 	{
-		_application_worker_count = GetConfig().GetStreamLoadBalancingThreadCount();
+		_application_worker_count = GetConfig().GetAppWorkerCount();
 		if(_application_worker_count < MIN_APPLICATION_WORKER_COUNT)
 		{
 			_application_worker_count = MIN_APPLICATION_WORKER_COUNT;
@@ -182,11 +182,10 @@ namespace pub
 
 		for(uint32_t i = 0; i < _application_worker_count; i++)
 		{
-			auto worker_name = ov::String::FormatString("%s/%s/%d", GetApplicationTypeName(), GetName().CStr(), i);
-			auto app_worker = std::make_shared<ApplicationWorker>(i, worker_name.CStr());
+			auto app_worker = std::make_shared<ApplicationWorker>(i, StringFromPublisherType(_publisher->GetPublisherType()).CStr());
 			if (app_worker->Start() == false)
 			{
-				logte("Cannot create ApplicationWorker (%s)", worker_name.CStr());
+				logte("Cannot create ApplicationWorker (%s/%s/%d)", GetApplicationTypeName(), GetName().CStr(), i);
 				Stop();
 
 				return false;
@@ -237,7 +236,7 @@ namespace pub
 	// Called by MediaRouteApplicationObserver
 	bool Application::OnStreamCreated(const std::shared_ptr<info::Stream> &info)
 	{
-		auto stream_worker_count = GetConfig().GetSessionLoadBalancingThreadCount();
+		auto stream_worker_count = GetConfig().GetStreamWorkerCount();
 
 		auto stream = CreateStream(info, stream_worker_count);
 		if (!stream)

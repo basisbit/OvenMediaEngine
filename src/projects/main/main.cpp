@@ -13,13 +13,13 @@
 #include <base/ovlibrary/log_write.h>
 #include <config/config_manager.h>
 #include <mediarouter/mediarouter.h>
+#include <modules/address/address_utilities.h>
 #include <monitoring/monitoring.h>
 #include <orchestrator/orchestrator.h>
 #include <providers/providers.h>
 #include <publishers/publishers.h>
 #include <transcoder/transcoder.h>
 #include <web_console/web_console.h>
-#include <modules/address/address_utilities.h>
 
 #include "banner.h"
 #include "init_utilities.h"
@@ -65,15 +65,15 @@ int main(int argc, char *argv[])
 	auto server_config = cfg::ConfigManager::GetInstance()->GetServer();
 	auto orchestrator = ocst::Orchestrator::GetInstance();
 	auto monitor = mon::Monitoring::GetInstance();
-	monitor->OnServerStarted(server_config->GetName(), server_config->GetID());
+	monitor->OnServerStarted(server_config);
 	logti("Server ID : %s", server_config->GetID().CStr());
 
 	// Get public IP
 	bool stun_server_parsed;
 	auto stun_server_address = server_config->GetStunServer(&stun_server_parsed);
-	if(stun_server_parsed)
+	if (stun_server_parsed)
 	{
-		if(ov::AddressUtilities::GetInstance()->ResolveMappedAddress(stun_server_address) == true)
+		if (ov::AddressUtilities::GetInstance()->ResolveMappedAddress(stun_server_address) == true)
 		{
 			logti("Resolved public IP address (%s) from stun server (%s)", ov::AddressUtilities::GetInstance()->GetMappedAddress()->GetIpAddress().CStr(), stun_server_address.CStr());
 		}
@@ -219,7 +219,9 @@ int main(int argc, char *argv[])
 	monitor->Release();
 	api_server->Stop();
 
+	RELEASE_MODULE(webrtc_provider, "WebRTC Provider");
 	RELEASE_MODULE(mpegts_provider, "MPEG-TS Provider");
+	RELEASE_MODULE(srt_provider, "SRT Provider");
 	RELEASE_MODULE(rtmp_provider, "RTMP Provider");
 	RELEASE_MODULE(ovt_provider, "OVT Provider");
 	RELEASE_MODULE(rtspc_provider, "RTSPC Provider");
@@ -305,11 +307,15 @@ static ov::Daemon::State Initialize(int argc, char *argv[], ParseOption *parse_o
 		return ov::Daemon::State::CHILD_FAIL;
 	}
 
-	ov::LogWrite::Initialize(parse_option->start_service);
+	ov::LogWrite::SetAsService(parse_option->start_service);
+
+	auto config_manager = cfg::ConfigManager::GetInstance();
+
+	config_manager->SetOmeVersion(OME_VERSION, OME_GIT_VERSION_EXTRA);
 
 	try
 	{
-		cfg::ConfigManager::GetInstance()->LoadConfigs(
+		config_manager->LoadConfigs(
 			parse_option->config_path,
 			parse_option->ignore_last_config);
 
@@ -325,6 +331,11 @@ static ov::Daemon::State Initialize(int argc, char *argv[], ParseOption *parse_o
 
 static bool Uninitialize()
 {
+	logti("Uninitializing TCP socket pool...");
+	ov::SocketPool::GetTcpPool()->Uninitialize();
+	logti("Uninitializing UDP socket pool...");
+	ov::SocketPool::GetUdpPool()->Uninitialize();
+
 	logti("OvenMediaEngine will be terminated");
 
 	return true;

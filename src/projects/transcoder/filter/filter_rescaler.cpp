@@ -11,8 +11,8 @@
 
 #include <base/ovlibrary/ovlibrary.h>
 
-#include "../transcoder_private.h"
 #include "../codec/codec_utilities.h"
+#include "../transcoder_private.h"
 
 MediaFilterRescaler::MediaFilterRescaler()
 {
@@ -61,6 +61,9 @@ bool MediaFilterRescaler::Configure(const std::shared_ptr<MediaTrack> &input_med
 		return false;
 	}
 
+	// Limit the number of filter threads to 4. I think 4 thread is usually enough for video filtering processing.
+	_filter_graph->nb_threads = 4;
+
 	AVRational input_timebase = TimebaseToAVRational(input_context->GetTimeBase());
 	AVRational output_timebase = TimebaseToAVRational(output_context->GetTimeBase());
 
@@ -80,15 +83,16 @@ bool MediaFilterRescaler::Configure(const std::shared_ptr<MediaTrack> &input_med
 	// Filter graph:
 	//     [buffer] -> [fps] -> [scale] -> [settb] -> [buffersink]
 
-	// Prepare the input filter
-	ov::String input_args = ov::String::FormatString(
-		"video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
-		input_media_track->GetWidth(), input_media_track->GetHeight(),
-		input_media_track->GetFormat(),
-		input_media_track->GetTimeBase().GetNum(), input_media_track->GetTimeBase().GetDen(),
-		1, 1);
+	// Prepare the input parameters
+	std::vector<ov::String> src_params = {
+		ov::String::FormatString("video_size=%dx%d", input_media_track->GetWidth(), input_media_track->GetHeight()),
+		ov::String::FormatString("pix_fmt=%d", input_media_track->GetFormat()),
+		ov::String::FormatString("time_base=%s", input_media_track->GetTimeBase().GetStringExpr().CStr()),
+		ov::String::FormatString("pixel_aspect=%d/%d", 1, 1)};
 
-	ret = ::avfilter_graph_create_filter(&_buffersrc_ctx, buffersrc, "in", input_args, nullptr, _filter_graph);
+	ov::String src_args = ov::String::Join(src_params, ":");
+
+	ret = ::avfilter_graph_create_filter(&_buffersrc_ctx, buffersrc, "in", src_args, nullptr, _filter_graph);
 	if (ret < 0)
 	{
 		logte("Could not create video buffer source filter for rescaling: %d", ret);
@@ -96,7 +100,6 @@ bool MediaFilterRescaler::Configure(const std::shared_ptr<MediaTrack> &input_med
 	}
 
 	// Prepare output filters
-
 	ret = ::avfilter_graph_create_filter(&_buffersink_ctx, buffersink, "out", nullptr, nullptr, _filter_graph);
 	if (ret < 0)
 	{
@@ -122,15 +125,15 @@ bool MediaFilterRescaler::Configure(const std::shared_ptr<MediaTrack> &input_med
 	_inputs->pad_idx = 0;
 	_inputs->next = nullptr;
 
-	std::vector<ov::String> filters = {
-		// "fps" filter options
-		ov::String::FormatString("fps=fps=%.2f:round=near", output_context->GetFrameRate()),
-		// ov::String::FormatString("framerate=fps=%.2f:interp_start=1:interp_end=1", output_context->GetFrameRate()),
-		// "scale" filter options
-		ov::String::FormatString("scale=%dx%d:flags=bilinear", output_context->GetVideoWidth(), output_context->GetVideoHeight()),
-		// "settb" filter options
-		ov::String::FormatString("settb=%s", output_context->GetTimeBase().GetStringExpr().CStr()),
-	};
+	std::vector<ov::String> filters;
+
+	if (output_context->GetFrameRate() > 0.0f)
+	{
+		filters.push_back(ov::String::FormatString("fps=fps=%.2f:round=near", output_context->GetFrameRate()));
+	}
+	filters.push_back(ov::String::FormatString("scale=%dx%d:flags=bilinear", output_context->GetVideoWidth(), output_context->GetVideoHeight()));
+	filters.push_back(ov::String::FormatString("settb=%s", output_context->GetTimeBase().GetStringExpr().CStr()));
+
 
 	ov::String output_filters = ov::String::Join(filters, ",");
 	if ((ret = ::avfilter_graph_parse_ptr(_filter_graph, output_filters, &_inputs, &_outputs, nullptr)) < 0)
@@ -145,7 +148,7 @@ bool MediaFilterRescaler::Configure(const std::shared_ptr<MediaTrack> &input_med
 		return false;
 	}
 
-	logtd("Rescaler is enabled for track #%u using parameters. input: %s / outputs: %s", input_media_track->GetId(), input_args.CStr(), output_filters.CStr());
+	logtd("Rescaler is enabled for track #%u using parameters. input: %s / outputs: %s", input_media_track->GetId(), src_args.CStr(), output_filters.CStr());
 
 	_input_context = input_context;
 	_output_context = output_context;

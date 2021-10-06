@@ -138,44 +138,44 @@ bool WebRtcPublisher::Start()
 
 	_message_thread.Start(ov::MessageThreadObserver<std::shared_ptr<ov::CommonMessage>>::GetSharedPtr());
 
+	// Deprecated by Getroot 210830
+	// _timer.Push(
+	// 	[this](void *parameter) -> ov::DelayQueueAction 
+	// 	{
+	// 		// 2018-12-24 23:06:25.035,RTSP.SS,CONN_COUNT,INFO,,,[Live users], [Playback users]
+	// 		std::shared_ptr<info::Application> rtsp_live_app_info;
+	// 		std::shared_ptr<mon::ApplicationMetrics> rtsp_live_app_metrics;
+	// 		std::shared_ptr<info::Application> rtsp_play_app_info;
+	// 		std::shared_ptr<mon::ApplicationMetrics> rtsp_play_app_metrics;
 
-	_timer.Push(
-		[this](void *parameter) -> ov::DelayQueueAction 
-		{
-			// 2018-12-24 23:06:25.035,RTSP.SS,CONN_COUNT,INFO,,,[Live users], [Playback users]
-			std::shared_ptr<info::Application> rtsp_live_app_info;
-			std::shared_ptr<mon::ApplicationMetrics> rtsp_live_app_metrics;
-			std::shared_ptr<info::Application> rtsp_play_app_info;
-			std::shared_ptr<mon::ApplicationMetrics> rtsp_play_app_metrics;
-
-			rtsp_live_app_metrics = nullptr;
-			rtsp_play_app_metrics = nullptr;
+	// 		rtsp_live_app_metrics = nullptr;
+	// 		rtsp_play_app_metrics = nullptr;
 			
-			// This log only for the "default" host and the "rtsp_live"/"rtsp_playback" applications 
-			rtsp_live_app_info = std::static_pointer_cast<info::Application>(GetApplicationByName(ocst::Orchestrator::GetInstance()->ResolveApplicationName("default", "rtsp_live")));
-			if (rtsp_live_app_info != nullptr)
-			{
-				rtsp_live_app_metrics = ApplicationMetrics(*rtsp_live_app_info);
-			}
-			rtsp_play_app_info = std::static_pointer_cast<info::Application>(GetApplicationByName(ocst::Orchestrator::GetInstance()->ResolveApplicationName("default", "rtsp_playback")));
-			if (rtsp_play_app_info != nullptr)
-			{
-				rtsp_play_app_metrics = ApplicationMetrics(*rtsp_play_app_info);
-			}
+	// 		// This log only for the "default" host and the "rtsp_live"/"rtsp_playback" applications 
+	// 		rtsp_live_app_info = std::static_pointer_cast<info::Application>(GetApplicationByName(ocst::Orchestrator::GetInstance()->ResolveApplicationName("default", "rtsp_live")));
+	// 		if (rtsp_live_app_info != nullptr)
+	// 		{
+	// 			rtsp_live_app_metrics = ApplicationMetrics(*rtsp_live_app_info);
+	// 		}
+	// 		rtsp_play_app_info = std::static_pointer_cast<info::Application>(GetApplicationByName(ocst::Orchestrator::GetInstance()->ResolveApplicationName("default", "rtsp_playback")));
+	// 		if (rtsp_play_app_info != nullptr)
+	// 		{
+	// 			rtsp_play_app_metrics = ApplicationMetrics(*rtsp_play_app_info);
+	// 		}
 
-			stat_log(STAT_LOG_WEBRTC_EDGE_VIEWERS, "%s,%s,%s,%s,,,%u,%u",
-					ov::Clock::Now().CStr(),
-					"WEBRTC.SS",
-					"CONN_COUNT",
-					"INFO",
-					rtsp_live_app_metrics != nullptr ? rtsp_live_app_metrics->GetTotalConnections() : 0,
-					rtsp_play_app_metrics != nullptr ? rtsp_play_app_metrics->GetTotalConnections() : 0);
+	// 		stat_log(STAT_LOG_WEBRTC_EDGE_VIEWERS, "%s,%s,%s,%s,,,%u,%u",
+	// 				ov::Clock::Now().CStr(),
+	// 				"WEBRTC.SS",
+	// 				"CONN_COUNT",
+	// 				"INFO",
+	// 				rtsp_live_app_metrics != nullptr ? rtsp_live_app_metrics->GetTotalConnections() : 0,
+	// 				rtsp_play_app_metrics != nullptr ? rtsp_play_app_metrics->GetTotalConnections() : 0);
 
-			return ov::DelayQueueAction::Repeat;
-		}
-		, 1000);
+	// 		return ov::DelayQueueAction::Repeat;
+	// 	}
+	// 	, 1000);
 
-	_timer.Start();
+	// _timer.Start();
 
 	return Publisher::Start();
 }
@@ -208,11 +208,8 @@ bool WebRtcPublisher::DisconnectSessionInternal(const std::shared_ptr<RtcSession
 	auto stream = std::dynamic_pointer_cast<RtcStream>(session->GetStream());
 
 	stream->RemoveSession(session->GetId());
-	auto stream_metrics = StreamMetrics(*std::static_pointer_cast<info::Stream>(stream));
-	if (stream_metrics != nullptr)
-	{
-		stream_metrics->OnSessionDisconnected(PublisherType::Webrtc);
-	}
+
+	MonitorInstance->OnSessionDisconnected(*stream, PublisherType::Webrtc);
 
 	session->Stop();
 
@@ -309,26 +306,35 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 																		  const info::VHostAppName &vhost_app_name, const ov::String &host_name, const ov::String &stream_name,
 																		  std::vector<RtcIceCandidate> *ice_candidates, bool &tcp_relay)
 {
+	info::VHostAppName final_vhost_app_name = vhost_app_name;
+	ov::String final_host_name = host_name;
+	ov::String final_stream_name = stream_name;
+
 	[[maybe_unused]] RequestStreamResult result = RequestStreamResult::init;
 	auto request = ws_client->GetClient()->GetRequest();
 	auto remote_address = request->GetRemote()->GetRemoteAddress();
 	auto uri = request->GetUri();
 	auto parsed_url = ov::Url::Parse(uri);
-
 	if (parsed_url == nullptr)
 	{
 		logte("Could not parse the url: %s", uri.CStr());
 		return nullptr;
 	}
 
-	// PORT can be omitted if port is rtmp default port, but SignedPolicy requires this information.
+	// PORT can be omitted if port is default port, but SignedPolicy requires this information.
 	if(parsed_url->Port() == 0)
 	{
 		parsed_url->SetPort(request->GetRemote()->GetLocalAddress()->Port());
 	}
 
-	auto [signed_policy_result, signed_policy] = Publisher::VerifyBySignedPolicy(parsed_url, remote_address);
-	if(signed_policy_result == AccessController::VerificationResult::Error)
+	uint64_t session_life_time = 0;
+	std::shared_ptr<const SignedToken> signed_token;
+	auto [signed_policy_result, signed_policy] =  Publisher::VerifyBySignedPolicy(parsed_url, remote_address);
+	if(signed_policy_result == AccessController::VerificationResult::Pass)
+	{
+		session_life_time = signed_policy->GetStreamExpireEpochMSec();
+	}
+	else if(signed_policy_result == AccessController::VerificationResult::Error)
 	{
 		return nullptr;
 	}
@@ -350,12 +356,60 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 			logtw("%s", signed_token->GetErrMessage().CStr());
 			return nullptr;
 		}
+		else if(signed_token_result == AccessController::VerificationResult::Pass)
+		{
+			session_life_time = signed_token->GetStreamExpiredTime();
+		}
 	}
 
-	auto stream = std::static_pointer_cast<RtcStream>(GetStream(vhost_app_name, stream_name));
+	// Admission Webhooks
+	auto [webhooks_result, admission_webhooks] = VerifyByAdmissionWebhooks(parsed_url, remote_address);
+	if(webhooks_result == AccessController::VerificationResult::Off)
+	{
+		// Success
+	}
+	else if(webhooks_result == AccessController::VerificationResult::Pass)
+	{
+		// Lifetime
+		if(admission_webhooks->GetLifetime() != 0)
+		{
+			// Choice smaller value
+			auto stream_expired_msec_from_webhooks = ov::Clock::NowMSec() + admission_webhooks->GetLifetime();
+			if(session_life_time == 0 || stream_expired_msec_from_webhooks < session_life_time)
+			{
+				session_life_time = stream_expired_msec_from_webhooks;
+			}
+		}
+
+		// Redirect URL
+		if(admission_webhooks->GetNewURL() != nullptr)
+		{
+			parsed_url = admission_webhooks->GetNewURL();
+			if(parsed_url->Port() == 0)
+			{
+				parsed_url->SetPort(request->GetRemote()->GetLocalAddress()->Port());
+			}
+
+			final_vhost_app_name = ocst::Orchestrator::GetInstance()->ResolveApplicationNameFromDomain(parsed_url->Host(), parsed_url->App());
+			final_host_name = parsed_url->Host();
+			final_stream_name = parsed_url->Stream();
+		}
+	}
+	else if(webhooks_result == AccessController::VerificationResult::Error)
+	{
+		logtw("AdmissionWebhooks error : %s", parsed_url->ToUrlString().CStr());
+		return nullptr;
+	}
+	else if(webhooks_result == AccessController::VerificationResult::Fail)
+	{
+		logtw("AdmissionWebhooks error : %s", admission_webhooks->GetErrReason().CStr());
+		return nullptr;
+	}
+
+	auto stream = std::static_pointer_cast<RtcStream>(GetStream(final_vhost_app_name, final_stream_name));
 	if(stream == nullptr)
 	{
-		stream = std::dynamic_pointer_cast<RtcStream>(PullStream(parsed_url, vhost_app_name, host_name, stream_name));
+		stream = std::dynamic_pointer_cast<RtcStream>(PullStream(parsed_url, final_vhost_app_name, final_host_name, final_stream_name));
 		if(stream == nullptr)
 		{
 			result = RequestStreamResult::origin_failed;
@@ -369,7 +423,7 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 						"WEBRTC.SS",
 						"REQUEST",
 						"INFO",
-						vhost_app_name.CStr(),
+						final_vhost_app_name.CStr(),
 						stream->GetMediaSource().CStr(),
 						remote_address->ToString().CStr());
 
@@ -383,13 +437,13 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 
 	if (stream == nullptr)
 	{
-		logte("Cannot find stream (%s/%s)", vhost_app_name.CStr(), stream_name.CStr());
+		logte("Cannot find stream (%s/%s)", final_vhost_app_name.CStr(), final_stream_name.CStr());
 		return nullptr;
 	}
 
 	if(stream->WaitUntilStart(10000) == false)
 	{
-		logtw("(%s/%s) stream has not started.", vhost_app_name.CStr(), stream_name.CStr());
+		logtw("(%s/%s) stream has not started.", final_vhost_app_name.CStr(), final_stream_name.CStr());
 		return nullptr;
 	}
 
@@ -412,6 +466,11 @@ std::shared_ptr<const SessionDescription> WebRtcPublisher::OnRequestOffer(const 
 	session_description->SetIceUfrag(_ice_port->GenerateUfrag());
 	session_description->Update();
 
+	// Passed AccessControl
+	ws_client->AddData("authorized", true);
+	ws_client->AddData("new_url", parsed_url->ToUrlString(true));
+	ws_client->AddData("stream_expired", session_life_time);
+
 	return session_description;
 }
 
@@ -421,79 +480,67 @@ bool WebRtcPublisher::OnAddRemoteDescription(const std::shared_ptr<http::svr::ws
 											 const std::shared_ptr<const SessionDescription> &offer_sdp,
 											 const std::shared_ptr<const SessionDescription> &peer_sdp)
 {
-	auto application = GetApplicationByName(vhost_app_name);
-	auto stream = GetStream(vhost_app_name, stream_name);
-	if (!stream)
+	auto [autorized_exist, authorized] = ws_client->GetData("authorized");
+	ov::String uri;
+	uint64_t session_life_time = 0;
+	if(autorized_exist == true && std::holds_alternative<bool>(authorized) == true && std::get<bool>(authorized) == true)
 	{
-		logte("Cannot find stream (%s/%s)", vhost_app_name.CStr(), stream_name.CStr());
+		auto [new_url_exist, new_url] = ws_client->GetData("new_url");
+		if(new_url_exist == true && std::holds_alternative<ov::String>(new_url) == true)
+		{
+			uri = std::get<ov::String>(new_url);
+		}
+		else
+		{
+			return false;
+		}
+
+		auto [stream_expired_exist, stream_expired] = ws_client->GetData("stream_expired");
+		if(stream_expired_exist == true && std::holds_alternative<uint64_t>(stream_expired) == true)
+		{
+			session_life_time = std::get<uint64_t>(stream_expired);
+		}
+		else
+		{
+			return false;
+		}
+	}
+	else
+	{
+		// This client was unauthoized when request offer situation
 		return false;
 	}
 
-	// SignedPolicy and SignedToken
-	auto request = ws_client->GetClient()->GetRequest();
-	auto remote_address = request->GetRemote()->GetRemoteAddress();
-	auto uri = request->GetUri();
 	auto parsed_url = ov::Url::Parse(uri);
-
 	if (parsed_url == nullptr)
 	{
 		logte("Could not parse the url: %s", uri.CStr());
 		return false;
 	}
 
-	// PORT can be omitted if port is rtmp default port, but SignedPolicy requires this information.
-	if(parsed_url->Port() == 0)
-	{
-		parsed_url->SetPort(request->GetRemote()->GetLocalAddress()->Port());
-	}
+	auto final_vhost_app_name = ocst::Orchestrator::GetInstance()->ResolveApplicationNameFromDomain(parsed_url->Host(), parsed_url->App());
+	auto final_stream_name = parsed_url->Stream();
 
-	uint64_t session_life_time = 0;
-	std::shared_ptr<const SignedToken> signed_token;
-	auto [signed_policy_result, signed_policy] =  Publisher::VerifyBySignedPolicy(parsed_url, remote_address);
-	if(signed_policy_result == AccessController::VerificationResult::Error)
-	{
-		return false;
-	}
-	else if(signed_policy_result == AccessController::VerificationResult::Fail)
-	{
-		logtw("%s", signed_policy->GetErrMessage().CStr());
-		return false;
-	}
-	else if(signed_policy_result == AccessController::VerificationResult::Pass)
-	{
-		session_life_time = signed_policy->GetStreamExpireEpochMSec();
-	}
-	else if(signed_policy_result == AccessController::VerificationResult::Off)
-	{
-		// SingedToken
-		auto [signed_token_result, signed_token] = Publisher::VerifyBySignedToken(parsed_url, remote_address);
-		if(signed_token_result == AccessController::VerificationResult::Error)
-		{
-			return false;
-		}
-		else if(signed_token_result == AccessController::VerificationResult::Fail)
-		{
-			logtw("%s", signed_token->GetErrMessage().CStr());
-			return false;
-		}
-		else if(signed_token_result == AccessController::VerificationResult::Pass)
-		{
-			session_life_time = signed_token->GetStreamExpiredTime();
-		}
-	}
-
+	// SignedPolicy and SignedToken
+	auto request = ws_client->GetClient()->GetRequest();
+	auto remote_address = request->GetRemote()->GetRemoteAddress();
+	
 	ov::String remote_sdp_text = peer_sdp->ToString();
 	logtd("OnAddRemoteDescription: %s", remote_sdp_text.CStr());
+
+	auto application = GetApplicationByName(final_vhost_app_name);
+	auto stream = GetStream(final_vhost_app_name, final_stream_name);
+	if (!stream)
+	{
+		logte("Cannot find stream (%s/%s)", final_vhost_app_name.CStr(), final_stream_name.CStr());
+		return false;
+	}
 
 	auto session = RtcSession::Create(Publisher::GetSharedPtrAs<WebRtcPublisher>(), application, stream, offer_sdp, peer_sdp, _ice_port, ws_client);
 	if (session != nullptr)
 	{
 		stream->AddSession(session);
-		auto stream_metrics = StreamMetrics(*std::static_pointer_cast<info::Stream>(stream));
-		if (stream_metrics != nullptr)
-		{
-			stream_metrics->OnSessionConnected(PublisherType::Webrtc);
-		}
+		MonitorInstance->OnSessionConnected(*stream, PublisherType::Webrtc);
 
 		auto ice_timeout = application->GetConfig().GetPublishers().GetWebrtcPublisher().GetTimeout();
 		_ice_port->AddSession(IcePortObserver::GetSharedPtr(), session->GetId(), offer_sdp, peer_sdp, ice_timeout, session_life_time, session);

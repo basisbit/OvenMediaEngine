@@ -1,4 +1,4 @@
-FROM    ubuntu:18.04 AS base
+FROM    ubuntu:20.04 AS base
 
 ## Install libraries by package
 ENV     DEBIAN_FRONTEND=noninteractive
@@ -12,8 +12,8 @@ ARG     PREFIX=/opt/ovenmediaengine
 ARG     MAKEFLAGS="-j16"
 
 ENV     OME_VERSION=master \
-        OPENSSL_VERSION=1.1.1i \
-        SRTP_VERSION=2.2.0 \
+        OPENSSL_VERSION=3.0.0-beta1 \
+        SRTP_VERSION=2.4.0 \
         SRT_VERSION=1.4.2 \
         OPUS_VERSION=1.1.3 \
         X264_VERSION=20190513-2245-stable \
@@ -29,11 +29,10 @@ RUN     apt-get -y install build-essential nasm autoconf libtool zlib1g-dev tcls
 
 ## Build OpenSSL
 RUN \
-        OPENSSL_DOWNLOAD_NAME=$(echo "${OPENSSL_VERSION}" | sed 's/\./_/g') && \
         DIR=/tmp/openssl && \
         mkdir -p ${DIR} && \
         cd ${DIR} && \
-        curl -sLf https://github.com/openssl/openssl/archive/OpenSSL_${OPENSSL_DOWNLOAD_NAME}.tar.gz | tar -xz --strip-components=1 && \
+        curl -sLf https://github.com/openssl/openssl/archive/openssl-${OPENSSL_VERSION}.tar.gz | tar -xz --strip-components=1 && \
         ./config --prefix="${PREFIX}" --openssldir="${PREFIX}" -Wl,-rpath="${PREFIX}/lib" shared no-idea no-mdc2 no-rc5 no-ec2m no-ecdh no-ecdsa no-async && \
         make && \
         make install_sw && \

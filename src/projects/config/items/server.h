@@ -8,15 +8,14 @@
 //==============================================================================
 #pragma once
 
+#include <fstream>
+
+#include "analytics/analytics.h"
+#include "base/ovlibrary/uuid.h"
 #include "bind/bind.h"
 #include "managers/managers.h"
 #include "p2p/p2p.h"
 #include "virtual_hosts/virtual_hosts.h"
-#include "base/ovlibrary/uuid.h"
-
-#include <fstream>
-
-#define SERVER_ID_STORAGE_FILE		"Server.id"
 
 namespace cfg
 {
@@ -44,6 +43,8 @@ namespace cfg
 
 		mgr::Managers _managers;
 
+		an::Analytics _analytics;
+
 		p2p::P2P _p2p;
 
 		vhost::VirtualHosts _virtual_hosts;
@@ -62,6 +63,8 @@ namespace cfg
 		CFG_DECLARE_REF_GETTER_OF(GetBind, _bind)
 
 		CFG_DECLARE_REF_GETTER_OF(GetManagers, _managers)
+
+		CFG_DECLARE_REF_GETTER_OF(GetAnalytics, _analytics)
 
 		CFG_DECLARE_REF_GETTER_OF(GetP2P, _p2p)
 
@@ -122,10 +125,11 @@ namespace cfg
 			Register("Bind", &_bind);
 
 			Register<Optional>("Managers", &_managers);
+			Register<Optional>("Analytics", &_analytics);
 
 			Register<Optional>({"P2P", "p2p"}, &_p2p);
 
-			Register<Optional>("VirtualHosts", &_virtual_hosts);
+			Register<Optional>({"VirtualHosts", OmitRule::Omit}, &_virtual_hosts);
 		}
 	};
 }  // namespace cfg

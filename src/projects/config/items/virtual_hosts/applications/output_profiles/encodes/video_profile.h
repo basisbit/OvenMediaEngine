@@ -28,6 +28,7 @@ namespace cfg
 					int _bitrate = 0;
 					ov::String _bitrate_string;
 					double _framerate = 0.0;
+					ov::String _preset;
 
 				public:
 					CFG_DECLARE_REF_GETTER_OF(IsBypass, _bypass)
@@ -39,6 +40,7 @@ namespace cfg
 					CFG_DECLARE_REF_GETTER_OF(GetBitrate, _bitrate)
 					CFG_DECLARE_REF_GETTER_OF(GetBitrateString, _bitrate_string)
 					CFG_DECLARE_REF_GETTER_OF(GetFramerate, _framerate)
+					CFG_DECLARE_REF_GETTER_OF(GetPreset, _preset)
 
 				protected:
 					void MakeList() override
@@ -49,15 +51,6 @@ namespace cfg
 						Register<Optional>("Codec", &_codec, [=]() -> std::shared_ptr<ConfigError> {
 							// <Codec> is an option when _bypass is true
 							return (_bypass) ? nullptr : CreateConfigError("Codec must be specified when bypass is false");
-						});
-						Register<Optional>("Scale", &_scale);
-						Register<Optional>("Width", &_width, [=]() -> std::shared_ptr<ConfigError> {
-							// <Width> is an option when _bypass is true
-							return (_bypass) ? nullptr : CreateConfigError("Width must be specified when bypass is false");
-						});
-						Register<Optional>("Height", &_height, [=]() -> std::shared_ptr<ConfigError> {
-							// <Height> is an option when _bypass is true
-							return (_bypass) ? nullptr : CreateConfigError("Height must be specified when bypass is false");
 						});
 						Register<Optional>(
 							"Bitrate", &_bitrate_string,
@@ -81,10 +74,12 @@ namespace cfg
 
 								return (_bitrate > 0) ? nullptr : CreateConfigError("Bitrate must be greater than 0");
 							});
-						Register<Optional>("Framerate", &_framerate, [=]() -> std::shared_ptr<ConfigError> {
-							// <Framerate> is an option when _bypass is true
-							return (_bypass) ? nullptr : CreateConfigError("Framerate must be specified when bypass is false");
-						});
+						Register<Optional>("Scale", &_scale);
+						Register<Optional>("Width", &_width);
+						Register<Optional>("Height", &_height);
+						Register<Optional>("Framerate", &_framerate);
+						Register<Optional>("Preset", &_preset);
+
 					}
 				};
 			}  // namespace oprf

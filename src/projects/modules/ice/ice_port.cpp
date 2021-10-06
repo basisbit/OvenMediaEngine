@@ -557,6 +557,12 @@ void IcePort::OnApplicationPacketReceived(const std::shared_ptr<ov::Socket> &rem
 		if (item != _address_port_table.end())
 		{
 			ice_port_info = item->second;
+
+			// When the candidate pair is determined, the peer starts sending DTLS messages. This can be seen as a true connected.
+			if(ice_port_info->state != IcePortConnectionState::Connected)
+			{
+				SetIceState(ice_port_info, IcePortConnectionState::Connected);
+			}
 		}
 	}
 
@@ -586,6 +592,21 @@ void IcePort::OnChannelDataPacketReceived(const std::shared_ptr<ov::Socket> &rem
 	application_gate_info.input_method = IcePort::GateInfo::GateType::DATA_CHANNEL;
 	application_gate_info.channel_number = message.GetChannelNumber();
 	application_gate_info.packet_type = IcePacketIdentifier::FindPacketType(message.GetData());
+
+	// Update GateInfo
+	// If a request comes from a send indication or channel, this is through a turn. When transmitting a packet to the player, it must be sent through a data indication or channel, so it stores related information.
+	std::shared_ptr<IcePortInfo> ice_port_info;
+	{
+		std::lock_guard<std::mutex> lock_guard(_port_table_lock);
+		auto item = _address_port_table.find(address);
+		if (item != _address_port_table.end())
+		{
+			ice_port_info = item->second;
+			ice_port_info->is_turn_client = true;
+			ice_port_info->is_data_channel_enabled = true;
+			ice_port_info->data_channle_number = application_gate_info.channel_number;
+		}
+	}
 
 	// Decapsulate and process the packet again.
 	OnPacketReceived(remote, address, application_gate_info, message.GetData());
@@ -738,14 +759,27 @@ bool IcePort::ProcessStunBindingRequest(const std::shared_ptr<ov::Socket> &remot
 		return false;
 	}
 
-	// Check if it is already connected but it comes from another address (ice candidate)
-	if (ice_port_info->state != IcePortConnectionState::New)
+	if (ice_port_info->state == IcePortConnectionState::New || 
+			(ice_port_info->state == IcePortConnectionState::Checking && ice_port_info->address != address) )
 	{
-		if(ice_port_info->address != address)
+		std::lock_guard<std::mutex> lock_guard(_port_table_lock);
+
+		if(ice_port_info->state == IcePortConnectionState::New)
 		{
-			logti("Ignore Stun Binding Request from(%s) because the ice port is already connected with (%s)", address.ToString().CStr(), ice_port_info->address.ToString().CStr());
-			return false;
+			logti("Add the client to the port list: %s", address.ToString().CStr());
 		}
+		else
+		{
+			logti("Update the client to the port list: to %s from %s", address.ToString().CStr(), ice_port_info->address.ToString().CStr());
+		}
+
+		ice_port_info->remote = remote;
+		ice_port_info->address = address;
+
+		_address_port_table[address] = ice_port_info;
+		_session_port_table[ice_port_info->session_id] = ice_port_info;
+
+		SetIceState(ice_port_info, IcePortConnectionState::Checking);
 	}
 
 	ice_port_info->UpdateBindingTime();
@@ -886,53 +920,6 @@ bool IcePort::ProcessStunBindingResponse(const std::shared_ptr<ov::Socket> &remo
 	}
 
 	logtd("Client %s sent STUN binding response", address.ToString().CStr());
-
-	// Store remote and address 
-	if (ice_port_info->state == IcePortConnectionState::New)
-	{
-		// Keep checking until the next Binding Request
-		SetIceState(ice_port_info, IcePortConnectionState::Checking);
-		ice_port_info->remote = remote;
-		ice_port_info->address = address;
-
-		// If a request comes from a send indication or channel, this is through a turn. When transmitting a packet to the player, it must be sent through a data indication or channel, so it stores related information.
-		if(gate_info.input_method != GateInfo::GateType::DIRECT)
-		{
-			ice_port_info->is_turn_client = true;
-			if(gate_info.input_method == GateInfo::GateType::DATA_CHANNEL)
-			{
-				ice_port_info->is_data_channel_enabled = true;
-				ice_port_info->data_channle_number = gate_info.channel_number;
-			}
-			else
-			{
-				ice_port_info->peer_address = gate_info.peer_address;
-			}
-		}	
-	}
-
-	// Update session table for performance
-	{
-		std::lock_guard<std::mutex> lock_guard(_port_table_lock);
-
-		if (_session_port_table.find(ice_port_info->session_id) == _session_port_table.end())
-		{
-			logti("Add the client to the port list: %s", address.ToString().CStr());
-
-			_address_port_table[address] = ice_port_info;
-			_session_port_table[ice_port_info->session_id] = ice_port_info;
-		}
-		else
-		{
-			// Updated
-		}
-	}
-
-
-	if (ice_port_info->state != IcePortConnectionState::Connected)
-	{
-		SetIceState(ice_port_info, IcePortConnectionState::Connected);
-	}
 
 	return true;
 }
@@ -1092,6 +1079,19 @@ bool IcePort::ProcessTurnSendIndication(const std::shared_ptr<ov::Socket> &remot
 	gate_info.input_method = IcePort::GateInfo::GateType::SEND_INDICATION;
 	gate_info.peer_address = xor_peer_attribute->GetAddress();
 
+	std::shared_ptr<IcePortInfo> ice_port_info;
+	{
+		std::lock_guard<std::mutex> lock_guard(_port_table_lock);
+		auto item = _address_port_table.find(address);
+		if (item != _address_port_table.end())
+		{
+			ice_port_info = item->second;
+			ice_port_info->is_turn_client = true;
+			ice_port_info->is_data_channel_enabled = false;
+			ice_port_info->peer_address = gate_info.peer_address;
+		}
+	}
+
 	OnPacketReceived(remote, address, gate_info, data);
 
 	return true;
@@ -1110,23 +1110,6 @@ bool IcePort::ProcessTurnCreatePermissionRequest(const std::shared_ptr<ov::Socke
 
 bool IcePort::ProcessTurnChannelBindRequest(const std::shared_ptr<ov::Socket> &remote, const ov::SocketAddress &address, GateInfo &gate_info, const StunMessage &message)
 {
-	//TODO(Getroot): Check validation
-	std::shared_ptr<IcePortInfo> ice_port_info;
-	{
-		std::lock_guard<std::mutex> lock_guard(_port_table_lock);
-		auto item = _address_port_table.find(address);
-		if (item != _address_port_table.end())
-		{
-			ice_port_info = item->second;
-		}
-	}
-
-	if (ice_port_info == nullptr)
-	{
-		logtd("Could not find client information. Dropping...");
-		return false;
-	}
-
 	StunMessage response_message;
 
 	auto channel_number_attribute = message.GetAttribute<StunChannelNumberAttribute>(StunAttributeType::ChannelNumber);
@@ -1141,9 +1124,18 @@ bool IcePort::ProcessTurnChannelBindRequest(const std::shared_ptr<ov::Socket> &r
 	response_message.SetHeader(StunClass::SuccessResponse, StunMethod::ChannelBind, message.GetTransactionId());
 	SendStunMessage(remote, address, gate_info, response_message, _hmac_key->ToString());
 
-	ice_port_info->is_turn_client = true;
-	ice_port_info->is_data_channel_enabled = true;
-	ice_port_info->data_channle_number = channel_number_attribute->GetChannelNumber();
+	std::shared_ptr<IcePortInfo> ice_port_info;
+	{
+		std::lock_guard<std::mutex> lock_guard(_port_table_lock);
+		auto item = _address_port_table.find(address);
+		if (item != _address_port_table.end())
+		{
+			ice_port_info = item->second;
+			ice_port_info->is_turn_client = true;
+			ice_port_info->is_data_channel_enabled = true;
+			ice_port_info->data_channle_number = channel_number_attribute->GetChannelNumber();
+		}
+	}
 
 	return true;
 }

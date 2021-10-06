@@ -32,8 +32,13 @@ TranscodeDecoder::TranscodeDecoder(info::Stream stream_info)
 
 TranscodeDecoder::~TranscodeDecoder()
 {
-	if (_context != nullptr)
-		::avcodec_flush_buffers(_context);
+	if (_context != nullptr && _context->codec != nullptr)
+	{
+		if (_context->codec->capabilities & AV_CODEC_CAP_ENCODER_FLUSH)
+		{
+			::avcodec_flush_buffers(_context);
+		}
+	}
 
 	::avcodec_free_context(&_context);
 	::avcodec_parameters_free(&_codec_par);
@@ -262,7 +267,6 @@ const ov::String TranscodeDecoder::ShowCodecParameters(const AVCodecContext *con
 				message.AppendFormat("%d Hz, %s, %s, ", parameters->sample_rate, channel_layout, ::av_get_sample_fmt_name(static_cast<AVSampleFormat>(parameters->format)));
 			}
 
-			// xxx kbps
 			message.AppendFormat("%d kbps, ", (parameters->bit_rate / 1024));
 			// timebase: 1/48000
 			message.AppendFormat("timebase: %d/%d, ", context->time_base.num, context->time_base.den);

@@ -22,6 +22,7 @@ RtpPacket::RtpPacket()
 
 	_buffer[0] = RTP_VERSION << 6;
 
+	_ntp_timestamp = 0;
 	_created_time = std::chrono::system_clock::now();
 
 	_is_available = true;
@@ -44,6 +45,10 @@ RtpPacket::RtpPacket(RtpPacket &src)
 	_extension_size = src._extension_size;
 	_sequence_number = src._sequence_number;
 	_timestamp = src._timestamp;
+	_ntp_timestamp = src._ntp_timestamp;
+	_is_keyframe = src._is_keyframe;
+	_is_first_packet_of_frame = src._is_first_packet_of_frame;
+	_is_video_packet = src._is_video_packet;
 
 	_data = src._data->Clone();
 	_data->SetLength(src._data->GetLength());

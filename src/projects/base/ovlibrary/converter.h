@@ -147,6 +147,23 @@ namespace ov
 			return ToSiString(bytes, 2) + "B";
 		}
 
+		static std::time_t ToTime(uint32_t year, uint32_t mon, uint32_t day, uint32_t hour, uint32_t min, bool isdst)
+		{
+			//TODO: Set timezone with new parmaeter
+			//setenv("TZ", "/usr/share/zoneinfo/America/Los_Angeles", 1); // POSIX-specific
+			
+			std::tm tm{};
+
+			tm.tm_year = year - 1900;
+			tm.tm_mon = mon - 1;
+			tm.tm_mday = day;
+			tm.tm_hour = hour;
+			tm.tm_min = min;
+			tm.tm_isdst = isdst?1:0;
+
+			return std::mktime(&tm);
+		}
+
 		static int32_t ToInt32(const char *str, int base = 10)
 		{
 			if (str != nullptr)
@@ -351,6 +368,21 @@ namespace ov
 			}
 
 			return ToDouble(ToString(value));
+		}
+
+
+		#define EPOCH  2208988800ULL
+		#define NTP_SCALE_FRAC  4294967296ULL
+
+		static uint64_t ToNTPTimestamp(double seconds)
+		{
+			uint64_t ntp_timestamp = 0;
+			double ipart, fraction;
+			fraction = modf(seconds, &ipart);
+			
+			ntp_timestamp = (((uint64_t)ipart) << 32) + (fraction * NTP_SCALE_FRAC);
+
+			return ntp_timestamp;
 		}
 	};
 }  // namespace ov

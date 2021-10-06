@@ -95,6 +95,8 @@ namespace pvd
 		_vhost_app_name(info::VHostAppName::InvalidVHostAppName())
 	{
 		_remote = client_socket;
+		SetMediaSource(_remote->GetRemoteAddressAsUrl());
+		
 		_import_chunk = std::make_shared<RtmpImportChunk>(RTMP_DEFAULT_CHUNK_SIZE);
 		_export_chunk = std::make_shared<RtmpExportChunk>(false, RTMP_DEFAULT_CHUNK_SIZE);
 		_media_info = std::make_shared<RtmpMediaInfo>();
@@ -343,7 +345,7 @@ namespace pvd
 			{
 				// Choice smaller value
 				auto stream_expired_msec_from_webhooks = ov::Clock::NowMSec() + _admission_webhooks->GetLifetime();
-				if(stream_expired_msec_from_webhooks < _stream_expired_msec)
+				if(_stream_expired_msec == 0 || stream_expired_msec_from_webhooks < _stream_expired_msec)
 				{
 					_stream_expired_msec = stream_expired_msec_from_webhooks;
 				}
@@ -365,7 +367,7 @@ namespace pvd
 		}
 		else if(webhooks_result == AccessController::VerificationResult::Fail)
 		{
-			logtw("%s", _admission_webhooks->GetErrReason().CStr());
+			logtw("AdmissionWebhooks error : %s", _admission_webhooks->GetErrReason().CStr());
 			Stop();
 			return false;
 		}
@@ -1084,6 +1086,10 @@ namespace pvd
 			document.GetProperty(2)->GetType() == AmfDataType::Array))
 		{
 			OnAmfMetaData(message->header, document, 2);
+		}
+		else if (message_name == RTMP_CMD_NAME_ONFI)
+		{
+			// Not support yet
 		}
 		else
 		{

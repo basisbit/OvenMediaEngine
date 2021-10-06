@@ -9,12 +9,12 @@
 #include "apps_controller.h"
 
 #include <config/config.h>
+#include <modules/json_serdes/converters.h>
 #include <orchestrator/orchestrator.h>
 
 #include <functional>
 
 #include "../../../../api_private.h"
-#include "../../../../converters/converters.h"
 #include "app_actions_controller.h"
 #include "output_profiles/output_profiles_controller.h"
 #include "streams/streams_controller.h"
@@ -60,22 +60,25 @@ namespace api
 
 			if (config.isMember("outputProfiles") == false)
 			{
-				Json::Value output_profile;
+				Json::Value &output_profile = config["outputProfile"];
+
 				output_profile["name"] = "bypass";
 				output_profile["outputStreamName"] = "${OriginStreamName}";
 
 				Json::Value codec;
 				codec["bypass"] = true;
 
-				output_profile["encodes"]["videos"].append(codec);
-				output_profile["encodes"]["audios"].append(codec);
+				auto &encodes = output_profile["encodes"];
+
+				encodes["videos"].append(codec);
+				encodes["audios"].append(codec);
 
 				codec = Json::objectValue;
 				codec["codec"] = "opus";
 				codec["bitrate"] = 128000;
 				codec["samplerate"] = 48000;
 				codec["channel"] = 2;
-				output_profile["encodes"]["audios"].append(codec);
+				encodes["audios"].append(codec);
 
 				config["outputProfiles"].append(output_profile);
 			}
@@ -103,7 +106,7 @@ namespace api
 
 				FillDefaultValues(item);
 
-				auto error = conv::ApplicationFromJson(item, &app_config);
+				auto error = ::serdes::ApplicationFromJson(item, &app_config);
 
 				if (error == nullptr)
 				{
@@ -136,12 +139,12 @@ namespace api
 
 				if (error != nullptr)
 				{
-					response_value.append(conv::JsonFromError(error));
+					response_value.append(::serdes::JsonFromError(error));
 				}
 				else
 				{
 					auto app = GetApplication(vhost, app_config.GetName().CStr());
-					auto app_json = conv::JsonFromApplication(app);
+					auto app_json = ::serdes::JsonFromApplication(app);
 
 					Json::Value response;
 					response["statusCode"] = static_cast<int>(http::StatusCode::OK);
@@ -181,7 +184,7 @@ namespace api
 											 const std::shared_ptr<mon::HostMetrics> &vhost,
 											 const std::shared_ptr<mon::ApplicationMetrics> &app)
 		{
-			return conv::JsonFromApplication(app);
+			return ::serdes::JsonFromApplication(app);
 		}
 
 		void OverwriteJson(const Json::Value &from, Json::Value *to)
@@ -229,7 +232,7 @@ namespace api
 
 			auto orchestrator = ocst::Orchestrator::GetInstance();
 
-			auto app_json = conv::JsonFromApplication(app);
+			auto app_json = ::serdes::JsonFromApplication(app);
 
 			// Delete GET-only fields
 			app_json.removeMember("dynamic");
@@ -254,14 +257,14 @@ namespace api
 			OverwriteJson(request_body, &app_json);
 
 			cfg::vhost::app::Application app_config;
-			auto error = conv::ApplicationFromJson(app_json, &app_config);
+			auto error = ::serdes::ApplicationFromJson(app_json, &app_config);
 
 			if (error == nullptr)
 			{
 				if (ocst::Orchestrator::GetInstance()->DeleteApplication(*app) == ocst::Result::Failed)
 				{
 					return http::HttpError::CreateError(http::StatusCode::Forbidden, "Could not delete the application: [%s/%s]",
-												  vhost->GetName().CStr(), app->GetName().GetAppName().CStr());
+														vhost->GetName().CStr(), app->GetName().GetAppName().CStr());
 				}
 
 				auto result = orchestrator->CreateApplication(*vhost, app_config);
@@ -291,7 +294,7 @@ namespace api
 				{
 					auto app = GetApplication(vhost, app_config.GetName().CStr());
 
-					return conv::JsonFromApplication(app);
+					return ::serdes::JsonFromApplication(app);
 				}
 			}
 
@@ -305,7 +308,7 @@ namespace api
 			if (ocst::Orchestrator::GetInstance()->DeleteApplication(*app) == ocst::Result::Failed)
 			{
 				return http::HttpError::CreateError(http::StatusCode::Forbidden, "Could not delete the application: [%s/%s]",
-											  vhost->GetName().CStr(), app->GetName().GetAppName().CStr());
+													vhost->GetName().CStr(), app->GetName().GetAppName().CStr());
 			}
 
 			cfg::ConfigManager::GetInstance()->SaveCurrentConfig();

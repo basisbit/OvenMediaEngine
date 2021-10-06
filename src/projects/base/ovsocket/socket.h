@@ -111,6 +111,7 @@ namespace ov
 
 		std::shared_ptr<SocketAddress> GetLocalAddress() const;
 		std::shared_ptr<SocketAddress> GetRemoteAddress() const;
+		String GetRemoteAddressAsUrl() const;
 
 		// for system socket
 		template <class T>
@@ -168,7 +169,7 @@ namespace ov
 		}
 
 		// only available for SRT socket
-		ov::String GetStreamId() const;
+		String GetStreamId() const;
 
 		bool Send(const std::shared_ptr<const Data> &data);
 		bool Send(const void *data, size_t length);
@@ -199,6 +200,9 @@ namespace ov
 		bool CloseIfNeeded();
 		bool CloseWithState(SocketState new_state);
 		bool Close();
+
+		bool CloseImmediately();
+		bool CloseImmediatelyWithState(SocketState new_state);
 
 		bool HasCommand() const
 		{
@@ -312,6 +316,26 @@ namespace ov
 			{
 			}
 
+			// Copy ctor
+			DispatchCommand(const DispatchCommand &another_command)
+				: type(another_command.type),
+				  new_state(another_command.new_state),
+				  address(another_command.address),
+				  data(another_command.data),
+				  enqueued_time(another_command.enqueued_time)
+			{
+			}
+
+			// Move ctor
+			DispatchCommand(DispatchCommand &&another_command)
+			{
+				std::swap(type, another_command.type);
+				std::swap(new_state, another_command.new_state);
+				std::swap(address, another_command.address);
+				std::swap(data, another_command.data);
+				std::swap(enqueued_time, another_command.enqueued_time);
+			}
+
 			bool IsCloseCommand() const
 			{
 				return OV_CHECK_FLAG(static_cast<uint8_t>(type), CLOSE_TYPE_MASK);
@@ -334,7 +358,7 @@ namespace ov
 				auto description = String::FormatString(
 					"<DispatchCommand: %p, %s, type: %s",
 					this,
-					ov::Converter::ToISO8601String(enqueued_time).CStr(),
+					Converter::ToISO8601String(enqueued_time).CStr(),
 					StringFromType(type));
 
 				if (type == DispatchCommand::Type::SendTo)
@@ -373,6 +397,7 @@ namespace ov
 		// Implementation of SocketPoolEventInterface
 		//--------------------------------------------------------------------
 		bool OnConnectedEvent(const std::shared_ptr<const SocketError> &error) override;
+		PostProcessMethod OnDataWritableEvent() override;
 		void OnDataAvailableEvent() override;
 
 		DispatchResult DispatchEventInternal(DispatchCommand &command);
@@ -392,7 +417,7 @@ namespace ov
 		virtual bool CloseInternal();
 
 	protected:
-		std::shared_ptr<const SocketError> DoConnectionCallback(const std::shared_ptr<const ov::SocketError> &error);
+		std::shared_ptr<const SocketError> DoConnectionCallback(const std::shared_ptr<const SocketError> &error);
 
 		// ClientSocket doesn't need to wait the first epoll event
 		bool AddToWorker(bool need_to_wait_first_epoll_event);
@@ -446,7 +471,7 @@ namespace ov
 		BlockingMode _blocking_mode = BlockingMode::Blocking;
 
 		std::atomic<bool> _need_to_wait_first_epoll_event{true};
-		ov::Event _first_epoll_event_received{true};
+		Event _first_epoll_event_received{true};
 
 		bool _end_of_stream = false;
 
@@ -465,6 +490,6 @@ namespace ov
 
 		volatile bool _force_stop = false;
 
-		ov::String _stream_id;	// only available for SRT socket
+		String _stream_id;	// only available for SRT socket
 	};
 }  // namespace ov

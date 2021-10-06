@@ -8,6 +8,4 @@
 //==============================================================================
 #pragma once
 
-#define OV_LOG_TAG                      "Ice"
-// Data dump log를 출력할지 여부
-#define STUN_LOG_DATA                   0
+#define OV_LOG_TAG                      "ICE"

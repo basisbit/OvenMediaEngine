@@ -352,7 +352,7 @@ namespace ov
 		OV_ASSERT2(_ssl_ctx != nullptr);
 		OV_ASSERT2(_bio != nullptr);
 
-		// SSL 세션 생성
+		// Create a SSL session
 		decltype(_ssl) ssl(::SSL_new(_ssl_ctx));
 
 		if (ssl == nullptr)
@@ -360,25 +360,14 @@ namespace ov
 			return false;
 		}
 
-		// 세션 설정
+		// Setup the session
 		SSL_set_app_data(ssl, app_data);
 		::SSL_set_bio(ssl, _bio, _bio);
 		::SSL_set_read_ahead(ssl, 1);
 		::SSL_set_mode(ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-		EC_KEY *ecdh = ::EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-
-		if (ecdh == nullptr)
-		{
-			return false;
-		}
-
 		// To prevent double free (_bio will be freed when calling SSL_free())
 		::BIO_up_ref(_bio);
-
-		::SSL_set_options(ssl, SSL_OP_SINGLE_ECDH_USE);
-		::SSL_set_tmp_ecdh(ssl, ecdh);
-		::EC_KEY_free(ecdh);
 
 		_ssl = std::move(ssl);
 
@@ -497,28 +486,41 @@ namespace ov
 
 		size_t read_bytes = 0;
 
-		int error = Read(buf, OV_COUNTOF(buf), &read_bytes);
-
-		switch (error)
+		while (true)
 		{
-			case SSL_ERROR_NONE:
-				// Read successfully
-				if (data->Append(buf, read_bytes) == false)
-				{
-					OV_ASSERT2(false);
-					return nullptr;
-				}
+			int error = Read(buf, OV_COUNTOF(buf), &read_bytes);
+			bool stop = false;
 
-				break;
+			switch (error)
+			{
+				case SSL_ERROR_NONE:
+					// Read successfully
+					if (data->Append(buf, read_bytes) == false)
+					{
+						OV_ASSERT2(false);
+						data = nullptr;
+						stop = true;
+					}
 
-			case SSL_ERROR_WANT_READ:
-				// Not enough data
-				break;
+					break;
 
-			default:
-				// Another error occurred
-				OV_ASSERT2(read_bytes == 0);
+				case SSL_ERROR_WANT_READ:
+					// Need more data
+					stop = true;
+					break;
+
+				default:
+					// Another error occurred
+					OV_ASSERT2(read_bytes == 0);
+					data = nullptr;
+					stop = true;
+					break;
+			}
+
+			if (stop)
+			{
 				break;
+			}
 		}
 
 		return data;

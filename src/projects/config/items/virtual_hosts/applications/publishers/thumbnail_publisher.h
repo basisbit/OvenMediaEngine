@@ -8,6 +8,7 @@
 //==============================================================================
 #pragma once
 
+#include "../../../common/cross_domain_support.h"
 #include "publisher.h"
 
 namespace cfg
@@ -18,25 +19,21 @@ namespace cfg
 		{
 			namespace pub
 			{
-				struct ThumbnailPublisher : public Publisher
+				struct ThumbnailPublisher : public Publisher, public cmn::CrossDomainSupport
 				{
+				public:
 					PublisherType GetType() const override
 					{
 						return PublisherType::Thumbnail;
 					}
-
-					CFG_DECLARE_REF_GETTER_OF(GetCrossDomainList, _cross_domains.GetUrls())
-					CFG_DECLARE_REF_GETTER_OF(GetCrossDomains, _cross_domains)
 
 				protected:
 					void MakeList() override
 					{
 						Publisher::MakeList();
 
-						Register<Optional>("CrossDomains", &_cross_domains);
+						Register<Optional>({"CrossDomains", OmitRule::Omit}, &_cross_domains);
 					}
-
-					cmn::CrossDomains _cross_domains;
 				};
 			}  // namespace pub
 		}	   // namespace app

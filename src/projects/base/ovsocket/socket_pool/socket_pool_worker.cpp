@@ -83,10 +83,18 @@ namespace ov
 		}
 
 		_socket_count = 0;
-		_socket_map.clear();
-		_sockets_to_insert.Clear();
-		_sockets_to_dispatch.clear();
-		_sockets_to_delete.Clear();
+		{
+			std::lock_guard lock_guard(_socket_map_mutex);
+			_socket_map.clear();
+
+			decltype(_sockets_to_insert)().swap(_sockets_to_insert);
+			decltype(_sockets_to_delete)().swap(_sockets_to_delete);
+		}
+
+		{
+			std::lock_guard lock_guard(_sockets_to_dispatch_mutex);
+			_sockets_to_dispatch.clear();
+		}
 
 		_connection_timed_out_queue.clear();
 
@@ -174,28 +182,25 @@ namespace ov
 
 	void SocketPoolWorker::MergeSocketList()
 	{
-		while (_sockets_to_insert.IsEmpty() == false)
+		std::lock_guard lock_guard(_socket_map_mutex);
+
+		decltype(_sockets_to_insert) insert_queue;
+		decltype(_sockets_to_insert) delete_queue;
+
+		std::swap(insert_queue, _sockets_to_insert);
+		std::swap(delete_queue, _sockets_to_delete);
+		while (insert_queue.empty() == false)
 		{
-			auto socket_value = _sockets_to_insert.Dequeue();
-
-			if (socket_value.has_value())
-			{
-				auto socket = socket_value.value();
-
-				_socket_map[socket->GetNativeHandle()] = socket;
-			}
+			auto socket = insert_queue.front();
+			insert_queue.pop();
+			_socket_map[socket->GetNativeHandle()] = socket;
 		}
 
-		while (_sockets_to_delete.IsEmpty() == false)
+		while (delete_queue.empty() == false)
 		{
-			auto socket_value = _sockets_to_delete.Dequeue();
-
-			if (socket_value.has_value())
-			{
-				auto socket = socket_value.value();
-
-				_socket_map.erase(socket->GetNativeHandle());
-			}
+			auto socket = delete_queue.front();
+			delete_queue.pop();
+			_socket_map.erase(socket->GetNativeHandle());
 		}
 	}
 
@@ -210,12 +215,10 @@ namespace ov
 			if (socket->HasExpiredCommand())
 			{
 				// Sockets that have failed to send data for a long time are forced to shut down
-				logaw("Failed to send data for %dms - This socket is going to be garbage collection (%s)", OV_SOCKET_EXPIRE_TIMEOUT, socket->ToString().CStr());
-
-				socket->CloseInternal();
-				socket->DispatchEvents();
+				logaw("Failed to send data for %dms - This socket is going to be garbage collected (%s)", OV_SOCKET_EXPIRE_TIMEOUT, socket->ToString().CStr());
 
 				DeleteFromEpoll(socket);
+				socket->CloseImmediatelyWithState(SocketState::Disconnected);
 
 				candidate = _gc_candidates.erase(candidate);
 			}
@@ -234,6 +237,11 @@ namespace ov
 
 	void SocketPoolWorker::CallbackTimedOutConnections()
 	{
+		if (_connection_timed_out_queue.size() <= 0)
+		{
+			return;
+		}
+
 		_connection_timed_out_queue_mutex.lock();
 		auto timed_out_queue = std::move(_connection_timed_out_queue);
 		_connection_timed_out_queue_mutex.unlock();
@@ -257,7 +265,7 @@ namespace ov
 
 		while (_stop_epoll_thread == false)
 		{
-			int count = EpollWait(100);
+			int count = EpollWait(3000);
 
 			if (count < 0)
 			{
@@ -356,20 +364,24 @@ namespace ov
 
 					if (need_to_close == false)
 					{
+						auto name = String(Platform::GetThreadName());
+
 						if (OV_CHECK_FLAG(events, EPOLLOUT))
 						{
 							if (OV_CHECK_FLAG(events, EPOLLHUP) == false)
 							{
-								switch (socket->DispatchEvents())
+								// Socket is ready to write data
+								switch (event_callback->OnDataWritableEvent())
 								{
-									case Socket::DispatchResult::Dispatched:
+									case PostProcessMethod::Nothing:
 										break;
 
-									case Socket::DispatchResult::PartialDispatched:
+									case PostProcessMethod::GarbageCollection:
+										logad("Need to do garbage collection for %s", socket->ToString().CStr());
 										_gc_candidates[socket->GetNativeHandle()] = socket;
 										break;
 
-									case Socket::DispatchResult::Error:
+									case PostProcessMethod::Error:
 										new_state = SocketState::Error;
 										need_to_close = true;
 										break;
@@ -393,7 +405,7 @@ namespace ov
 							// An error occurred
 							int socket_error;
 
-							if (socket->GetSockOpt(SO_ERROR, &socket_error))
+							if (socket->IsClosable() && socket->GetSockOpt(SO_ERROR, &socket_error))
 							{
 								logad("EPOLLERR detected: %s\n", ::strerror(socket_error));
 							}
@@ -402,7 +414,7 @@ namespace ov
 							need_to_close = true;
 						}
 
-						if (OV_CHECK_FLAG(events, EPOLLHUP) || OV_CHECK_FLAG(events, EPOLLRDHUP))
+						if (OV_CHECK_FLAG(events, EPOLLHUP))
 						{
 							if (socket->GetState() != SocketState::Error)
 							{
@@ -410,8 +422,13 @@ namespace ov
 								socket->SetEndOfStream();
 
 								new_state = SocketState::Disconnected;
-								need_to_close = true;
 							}
+							else
+							{
+								new_state = SocketState::Error;
+							}
+
+							need_to_close = true;
 						}
 					}
 					else
@@ -423,12 +440,9 @@ namespace ov
 					{
 						_gc_candidates.erase(socket->GetNativeHandle());
 
-						if (socket->IsClosable())
-						{
-							socket->CloseWithState(new_state);
-						}
-
-						EnqueueToDispatchLater(socket);
+						DeleteFromEpoll(socket);
+						logad("CloseImmediatelyWithState(%s) for %s", StringFromSocketState(new_state), socket->ToString().CStr());
+						socket->CloseImmediatelyWithState(new_state);
 					}
 				}
 			}
@@ -436,26 +450,44 @@ namespace ov
 			if (_sockets_to_dispatch.empty() == false)
 			{
 				// Move _extra_epoll_events to events to avoid blocking
-				std::deque<std::shared_ptr<Socket>> socket_list;
+				std::unordered_map<std::shared_ptr<Socket>, std::shared_ptr<Socket>> socket_list;
 
 				{
 					std::lock_guard lock_guard(_sockets_to_dispatch_mutex);
 					std::swap(socket_list, _sockets_to_dispatch);
 				}
 
-				for (auto &socket : socket_list)
+				for (auto socket_item : socket_list)
 				{
+					auto socket = socket_item.second;
+
 					switch (socket->DispatchEvents())
 					{
 						case Socket::DispatchResult::Dispatched:
 							break;
 
 						case Socket::DispatchResult::PartialDispatched:
-							_gc_candidates[socket->GetNativeHandle()] = socket;
+							if (socket->IsClosable())
+							{
+								logad("Need to do garbage collection for %s (dispatch_later)", socket->ToString().CStr());
+								_gc_candidates[socket->GetNativeHandle()] = socket;
+							}
+							else
+							{
+								// Socket is already closed
+							}
 							break;
 
 						case Socket::DispatchResult::Error:
-							socket->CloseWithState(SocketState::Error);
+							if (socket->IsClosable())
+							{
+								logad("Socket %s will be closed by dispatcher", socket->ToString().CStr());
+								socket->CloseImmediatelyWithState(SocketState::Error);
+							}
+							else
+							{
+								// Socket is already closed
+							}
 							break;
 					}
 				}
@@ -479,8 +511,7 @@ namespace ov
 			// Close immediately (Do not half-close)
 			if (socket->IsClosable())
 			{
-				socket->CloseInternal();
-				socket->SetState(SocketState::Closed);
+				socket->CloseImmediatelyWithState(SocketState::Closed);
 
 				// Do connection callback, etc...
 				socket->DispatchEvents();
@@ -539,7 +570,8 @@ namespace ov
 
 		if (error == nullptr)
 		{
-			_sockets_to_insert.Enqueue(socket);
+			std::lock_guard lock_guard(_socket_map_mutex);
+			_sockets_to_insert.push(socket);
 		}
 		else
 		{
@@ -698,14 +730,14 @@ namespace ov
 	{
 		std::lock_guard lock_guard(_sockets_to_dispatch_mutex);
 
-		_sockets_to_dispatch.push_back(socket);
+		_sockets_to_dispatch[socket] = socket;
 	}
 
 	void SocketPoolWorker::EnqueueToCheckConnectionTimeOut(const std::shared_ptr<Socket> &socket, int timeout_msec)
 	{
 		_connection_callback_queue.Push(
 			[=](void *parameter) -> DelayQueueAction {
-				auto lock_guard = std::lock_guard(_connection_timed_out_queue_mutex);
+				std::lock_guard lock_guard(_connection_timed_out_queue_mutex);
 				_connection_timed_out_queue.push_back(socket);
 				return DelayQueueAction::Stop;
 			},
@@ -757,7 +789,6 @@ namespace ov
 		if (error == nullptr)
 		{
 			logad("Socket #%d is unregistered", native_handle);
-			_sockets_to_delete.Enqueue(socket);
 		}
 		else
 		{
@@ -774,6 +805,11 @@ namespace ov
 					  error->ToString().CStr(),
 					  StackTrace::GetStackTrace().CStr());
 			}
+		}
+
+		{
+			std::lock_guard lock_guard(_socket_map_mutex);
+			_socket_map.erase(socket->GetNativeHandle());
 		}
 
 		return (error == nullptr);
@@ -796,7 +832,7 @@ namespace ov
 		description.AppendFormat(
 			"<SocketPoolWorker: %p, socket_map: %zu, insert queue: %zu, delete queue: %zu, connection queue: %zu>",
 			this, _socket_map.size(),
-			_sockets_to_insert.Size(), _sockets_to_delete.Size(),
+			_sockets_to_insert.size(), _sockets_to_delete.size(),
 			_connection_timed_out_queue.size());
 
 		return description;

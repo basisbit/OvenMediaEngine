@@ -195,9 +195,12 @@ namespace ov
 			return true;
 		} while (false);
 
-		if (CloseInternal())
 		{
-			SetState(SocketState::Closed);
+			std::lock_guard lock_guard(_dispatch_queue_lock);
+			if (CloseInternal())
+			{
+				SetState(SocketState::Closed);
+			}
 		}
 
 		return false;
@@ -282,7 +285,7 @@ namespace ov
 
 	bool Socket::AddToWorker(bool need_to_wait_first_epoll_event)
 	{
-		if (GetType() == ov::SocketType::Srt)
+		if (GetType() == SocketType::Srt)
 		{
 			// SRT doesn't generates any epoll events after ::srt_epoll_add_usock()
 			need_to_wait_first_epoll_event = false;
@@ -530,7 +533,7 @@ namespace ov
 		return SocketWrapper();
 	}
 
-	std::shared_ptr<const SocketError> Socket::DoConnectionCallback(const std::shared_ptr<const ov::SocketError> &error)
+	std::shared_ptr<const SocketError> Socket::DoConnectionCallback(const std::shared_ptr<const SocketError> &error)
 	{
 		if (_blocking_mode == BlockingMode::Blocking)
 		{
@@ -709,6 +712,11 @@ namespace ov
 		return _remote_address;
 	}
 
+	String Socket::GetRemoteAddressAsUrl() const
+	{
+		return String::FormatString("%s://%s", StringFromSocketType(GetType()), GetRemoteAddress() != nullptr ? GetRemoteAddress()->ToString().CStr() : "unknown");
+	}
+
 	bool Socket::SetSockOpt(int proto, int option, const void *value, socklen_t value_length)
 	{
 		CHECK_STATE(!= SocketState::Closed, false);
@@ -762,7 +770,7 @@ namespace ov
 
 	bool Socket::IsClosable() const
 	{
-		return OV_CHECK_FLAG(ov::ToUnderlyingType(_state), SOCKET_STATE_CLOSABLE);
+		return OV_CHECK_FLAG(ToUnderlyingType(_state), SOCKET_STATE_CLOSABLE);
 	}
 
 	SocketState Socket::GetState() const
@@ -883,11 +891,23 @@ namespace ov
 			return DispatchResult::Dispatched;
 		}
 
-		// Since some data has been sent, the time needs to be updated.
-		command.UpdateTime();
-		data = data->Subdata(sent_bytes);
+		if (sent_bytes == -1)
+		{
+			return DispatchResult::Error;
+		}
 
-		logad("Some data has not been sent: %ld bytes left", data->GetLength());
+		if (sent_bytes > 0)
+		{
+			// Since some data has been sent, the time needs to be updated.
+			command.UpdateTime();
+			data = data->Subdata(sent_bytes);
+
+			logad("Part of the data has been sent: %ld bytes, left: %ld bytes (%s)", sent_bytes, data->GetLength(), command.ToString().CStr());
+		}
+		else
+		{
+			// logad("Could not send data: %ld bytes (%s)", data->GetLength(), command.ToString().CStr());
+		}
 
 		return DispatchResult::PartialDispatched;
 	}
@@ -899,8 +919,9 @@ namespace ov
 		DispatchResult result = DispatchResult::Dispatched;
 
 		{
-			std::lock_guard lock_guard(_dispatch_queue_lock);
 			SOCKET_PROFILER_AFTER_LOCK();
+
+			std::lock_guard lock_guard(_dispatch_queue_lock);
 
 			[[maybe_unused]] auto count = _dispatch_queue.size();
 			SOCKET_PROFILER_POST_HANDLER([&](int64_t lock_elapsed, int64_t total_elapsed) {
@@ -911,66 +932,62 @@ namespace ov
 				}
 			});
 
-			if (_dispatch_queue.empty())
+			if (_dispatch_queue.empty() == false)
 			{
-				return DispatchResult::Dispatched;
-			}
+				logap("Dispatching events (count: %zu)...", _dispatch_queue.size());
 
-			logap("Dispatching events (count: %zu)...", _dispatch_queue.size());
-
-			while (_dispatch_queue.empty() == false)
-			{
-				auto front = _dispatch_queue.front();
-				_dispatch_queue.pop_front();
-
-				bool is_close_command = front.IsCloseCommand();
-
-				if ((GetState() == SocketState::Closed) && (is_close_command == false))
+				while (_dispatch_queue.empty() == false)
 				{
-					// If the socket is closed during dispatching, the rest of the data will not be sent.
-					logad("Some commands have not been dispatched: %zu commands", _dispatch_queue.size());
-#if DEBUG
-					for (auto &queue : _dispatch_queue)
+					auto front = _dispatch_queue.front();
+					_dispatch_queue.pop_front();
+
+					bool is_close_command = front.IsCloseCommand();
+
+					if ((GetState() == SocketState::Closed) && (is_close_command == false))
 					{
-						logad("  - Command: %s", queue.ToString().CStr());
-					}
+						// If the socket is closed during dispatching, the rest of the data will not be sent.
+						logad("Some commands have not been dispatched: %zu commands", _dispatch_queue.size());
+#if DEBUG
+						for (auto &queue : _dispatch_queue)
+						{
+							logad("  - Command: %s", queue.ToString().CStr());
+						}
 #endif	// DEBUG
 
-					_dispatch_queue.clear();
+						_dispatch_queue.clear();
 
-					result = DispatchResult::Dispatched;
-					break;
-				}
-
-				result = DispatchEventInternal(front);
-
-				if (result == DispatchResult::Dispatched)
-				{
-					// Dispatches the next item
-					continue;
-				}
-				else if (result == DispatchResult::PartialDispatched)
-				{
-					// The data is not fully processed and will not be removed from queue
-
-					// Re-enqueue the command partially processed
-					_dispatch_queue.push_front(front);
-
-					// Close-related commands will be processed when we receive the event from epoll later
-				}
-				else
-				{
-					// An error occurred
-
-					if (is_close_command)
-					{
-						// Ignore errors that occurred during close
 						result = DispatchResult::Dispatched;
+						break;
+					}
+
+					result = DispatchEventInternal(front);
+
+					if (result == DispatchResult::Dispatched)
+					{
+						// Dispatches the next item
 						continue;
 					}
-				}
+					else if (result == DispatchResult::PartialDispatched)
+					{
+						// The data is not fully processed and will not be removed from queue
 
-				break;
+						_dispatch_queue.emplace_front(front);
+
+						// Close-related commands will be processed when we receive the event from epoll later
+					}
+					else
+					{
+						// An error occurred
+						if (is_close_command)
+						{
+							// Ignore errors that occurred during close
+							result = DispatchResult::Dispatched;
+							continue;
+						}
+					}
+
+					break;
+				}
 			}
 		}
 
@@ -1000,13 +1017,16 @@ namespace ov
 				OV_ASSERT2(count == 0);
 			}
 #endif	// DEBUG
-				return Socket::DispatchResult::Dispatched;
+				return DispatchResult::Dispatched;
 
-			case BlockingMode::NonBlocking:
+			case BlockingMode::NonBlocking: {
+				// Due to the connection callback point, the DispatchEventsInternal() specifically performs mutex.lock inside.
+				// std::lock_guard lock_guard(_dispatch_queue_lock);
 				return DispatchEventsInternal();
+			}
 		}
 
-		return Socket::DispatchResult::Error;
+		return DispatchResult::Error;
 	}
 
 	ssize_t Socket::SendInternal(const std::shared_ptr<const Data> &data)
@@ -1056,7 +1076,7 @@ namespace ov
 								break;
 
 							default:
-								logaw("Could not send data: %zd (%s)", sent, error->ToString().CStr());
+								logaw("Could not send data: %zd (%s), %s", sent, error->ToString().CStr(), ToString().CStr());
 								break;
 						}
 
@@ -1219,6 +1239,23 @@ namespace ov
 		return total_sent;
 	}
 
+	PostProcessMethod Socket::OnDataWritableEvent()
+	{
+		switch (DispatchEvents())
+		{
+			case DispatchResult::Dispatched:
+				return PostProcessMethod::Nothing;
+
+			case DispatchResult::PartialDispatched:
+				return PostProcessMethod::GarbageCollection;
+
+			case DispatchResult::Error:
+				return PostProcessMethod::Error;
+		}
+
+		return PostProcessMethod::Error;
+	}
+
 	void Socket::OnDataAvailableEvent()
 	{
 		logad("Socket is ready to read");
@@ -1263,7 +1300,21 @@ namespace ov
 
 					if (AppendCommand({data->Clone()}))
 					{
-						return (DispatchEvents() != DispatchResult::Error);
+						// Need to send later
+						switch (DispatchEvents())
+						{
+							case DispatchResult::Dispatched:
+								break;
+
+							case DispatchResult::PartialDispatched:
+								_worker->EnqueueToDispatchLater(GetSharedPtr());
+								break;
+
+							case DispatchResult::Error:
+								return false;
+						}
+
+						return true;
 					}
 
 					return false;
@@ -1341,9 +1392,23 @@ namespace ov
 				{
 					CHECK_STATE(== SocketState::Connected, false);
 
-					if (AppendCommand({address, data->Clone()}))
+					if (AppendCommand({data->Clone()}))
 					{
-						return (DispatchEvents() != DispatchResult::Error);
+						// Need to send later
+						switch (DispatchEvents())
+						{
+							case DispatchResult::Dispatched:
+								break;
+
+							case DispatchResult::PartialDispatched:
+								_worker->EnqueueToDispatchLater(GetSharedPtr());
+								break;
+
+							case DispatchResult::Error:
+								return false;
+						}
+
+						return true;
 					}
 
 					return false;
@@ -1506,6 +1571,8 @@ namespace ov
 			{
 				if (_socket.GetType() != SocketType::Srt)
 				{
+					SocketState new_state = SocketState::Error;
+
 					switch (socket_error->GetCode())
 					{
 						// Errors that can occur under normal circumstances do not output
@@ -1515,6 +1582,7 @@ namespace ov
 
 						case ECONNRESET:
 							// Peer is disconnected
+							new_state = SocketState::Disconnected;
 							break;
 
 						case ENOTCONN:
@@ -1532,7 +1600,7 @@ namespace ov
 								  StackTrace::GetStackTrace().CStr());
 					}
 
-					CloseWithState(SocketState::Error);
+					CloseWithState(new_state);
 				}
 				else
 				{
@@ -1656,12 +1724,14 @@ namespace ov
 			return Close();
 		}
 
-		return (IsClosing() == false) && Close();
+		return IsClosing() || Close();
 	}
 
 	bool Socket::CloseWithState(SocketState new_state)
 	{
 		CHECK_STATE(>= SocketState::Closed, false);
+
+		logad("Closing %s...", GetRemoteAddress() != nullptr ? GetRemoteAddress()->ToString().CStr() : GetStreamId().CStr());
 
 		if (GetState() == SocketState::Closed)
 		{
@@ -1687,13 +1757,17 @@ namespace ov
 				}
 
 				// Close regardless of result
-				if (CloseInternal())
 				{
-					SetState(new_state);
-				}
-				else
-				{
-					result = false;
+					std::lock_guard lock_guard(_dispatch_queue_lock);
+
+					if (CloseInternal())
+					{
+						SetState(new_state);
+					}
+					else
+					{
+						result = false;
+					}
 				}
 
 				return result;
@@ -1713,7 +1787,8 @@ namespace ov
 
 				if (_has_close_command == false)
 				{
-					logad("Enqueuing close command");
+					logad("Enqueuing close command (new_state: %s)", StringFromSocketState(new_state));
+
 					_has_close_command = true;
 
 					if ((GetState() != SocketState::Disconnected) && (GetState() != SocketState::Error))
@@ -1726,17 +1801,43 @@ namespace ov
 				}
 				else
 				{
-					logad("This socket already has close command (Do not need to call Close*() in this case)");
+					logad("This socket already has close command (Do not need to call Close*() in this case)\n%s", StackTrace::GetStackTrace().CStr());
 				}
+
+				_worker->EnqueueToDispatchLater(GetSharedPtr());
+
+				return true;
 			}
 		}
 
-		return (DispatchEvents() != DispatchResult::Error);
+		return false;
 	}
 
 	bool Socket::Close()
 	{
 		return CloseWithState(SocketState::Closed);
+	}
+
+	bool Socket::CloseImmediately()
+	{
+		std::lock_guard lock_guard(_dispatch_queue_lock);
+
+		// We must call DispatchEvents() so that the _post_callback can be called.
+		return CloseInternal() && (DispatchEvents() != DispatchResult::Error);
+	}
+
+	bool Socket::CloseImmediatelyWithState(SocketState new_state)
+	{
+		std::lock_guard lock_guard(_dispatch_queue_lock);
+
+		// We must call DispatchEvents() so that the _post_callback can be called.
+		if (CloseInternal() && (DispatchEvents() != DispatchResult::Error))
+		{
+			SetState(new_state);
+			return true;
+		}
+
+		return false;
 	}
 
 	Socket::DispatchResult Socket::HalfClose()
@@ -1765,7 +1866,7 @@ namespace ov
 			case SocketState::Created:
 				[[fallthrough]];
 			case SocketState::Disconnected:
-				return Socket::DispatchResult::Dispatched;
+				return DispatchResult::Dispatched;
 
 			default:
 				break;
@@ -1859,6 +1960,8 @@ namespace ov
 #endif	// DEBUG
 				}
 			}
+
+			_dispatch_queue.clear();
 
 			logad("Socket is closed successfully");
 

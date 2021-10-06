@@ -30,7 +30,8 @@ std::shared_ptr<MediaRouteApplication> MediaRouteApplication::Create(const info:
 MediaRouteApplication::MediaRouteApplication(const info::Application &application_info)
 	: _application_info(application_info)
 {
-	_max_worker_thread_count = _application_info.GetConfig().GetPublishers().GetStreamLoadBalancingThreadCount();
+	_max_worker_thread_count = (_application_info.GetConfig().GetPublishers().GetAppWorkerCount() / 2);
+
 	if (_max_worker_thread_count < MIN_APPLICATION_WORKER_COUNT)
 	{
 		_max_worker_thread_count = MIN_APPLICATION_WORKER_COUNT;
@@ -46,11 +47,11 @@ MediaRouteApplication::MediaRouteApplication(const info::Application &applicatio
 	{
 		_inbound_stream_indicator.push_back(std::make_shared<ov::Queue<std::shared_ptr<MediaRouteStream>>>(
 			ov::String::FormatString("%s - Mediarouter inbound indicator (%d/%d)", _application_info.GetName().CStr(), worker_id, _max_worker_thread_count),
-			100));
+			500));
 
 		_outbound_stream_indicator.push_back(std::make_shared<ov::Queue<std::shared_ptr<MediaRouteStream>>>(
 			ov::String::FormatString("%s - Mediarouter outbound indicator (%d/%d)", _application_info.GetName().CStr(), worker_id, _max_worker_thread_count),
-			100));
+			500));
 	}
 }
 
@@ -260,6 +261,8 @@ bool MediaRouteApplication::OnStreamCreated(
 		{
 			return false;
 		}
+
+		
 	}
 	else if (connector == MediaRouteApplicationConnector::ConnectorType::Transcoder || connector == MediaRouteApplicationConnector::ConnectorType::Relay)
 	{

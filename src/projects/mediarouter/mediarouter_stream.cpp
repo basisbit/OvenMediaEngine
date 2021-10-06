@@ -763,7 +763,7 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 	{
 		int64_t uptime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - _stat_start_time).count();
 
-		int64_t rescaled_last_pts = _stat_recv_pkt_lpts[track_id] * 1000 / _stream->GetTrack(track_id)->GetTimeBase().GetDen();
+		int64_t rescaled_last_pts = (int64_t)((double)(_stat_recv_pkt_lpts[track_id] * 1000) * _stream->GetTrack(track_id)->GetTimeBase().GetExpr());
 
 		_stat_first_time_diff[track_id] = uptime - rescaled_last_pts;
 	}
@@ -783,7 +783,7 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 			auto track_id = iter.first;
 			auto track = iter.second;
 
-			int64_t rescaled_last_pts = _stat_recv_pkt_lpts[track_id] * 1000 / track->GetTimeBase().GetDen();
+			int64_t rescaled_last_pts = (int64_t)((double)(_stat_recv_pkt_lpts[track_id] * 1000) * track->GetTimeBase().GetExpr());
 
 			int64_t first_delay = _stat_first_time_diff[track_id];
 
@@ -798,19 +798,23 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 			min_pts = std::min(min_pts, rescaled_last_pts);
 			max_pts = std::max(max_pts, rescaled_last_pts);
 
-			stat_track_str.AppendFormat("\n\t[%3d] type: %5s(%2d/%4s), pts: %lldms, delay: %5lldms, pkt_cnt: %6lld, pkt_siz: %sB",
+			stat_track_str.AppendFormat("\n\ttrack:%3d, type: %4s, codec: %4s(%2d), pts: %lldms(%5lldms), tb: %d/%5d, pkt_cnt: %6lld, pkt_siz: %sB, bps: %dKbps",
 										track_id,
 										track->GetMediaType() == MediaType::Video ? "video" : "audio",
-										track->GetCodecId(),
 										::StringFromMediaCodecId(track->GetCodecId()).CStr(),
-										rescaled_last_pts, (first_delay - last_delay) * -1,
+										track->GetCodecId(),
+										rescaled_last_pts,
+										(first_delay - last_delay) * -1,
+										track->GetTimeBase().GetNum(), track->GetTimeBase().GetDen(),
 										_stat_recv_pkt_count[track_id],
-										ov::Converter::ToSiString(_stat_recv_pkt_size[track_id], 1).CStr());
+										ov::Converter::ToSiString(_stat_recv_pkt_size[track_id], 1).CStr(),
+										_stat_recv_pkt_size[track_id] / (uptime/1000) * 8 / 1000
+										);
 		}
 
 		ov::String stat_stream_str = "";
 
-		stat_stream_str.AppendFormat("\n - MediaRouter Stream | type: %s, name: %s/%s, uptime: %lldms, queue: %d, sync: %lldms",
+		stat_stream_str.AppendFormat("\n - MediaRouter Stream | type: %s, name: %s/%s, uptime: %lldms, queue: %d, min/max gap: %lldms",
 									 _inout_type == MediaRouterStreamType::INBOUND ? "Inbound" : "Outbound",
 									 _stream->GetApplicationInfo().GetName().CStr(),
 									 _stream->GetName().CStr(),
@@ -973,14 +977,17 @@ std::shared_ptr<MediaPacket> MediaRouteStream::Pop()
 	_media_packet_stash[media_packet->GetTrackId()] = std::move(media_packet);
 
 	////////////////////////////////////////////////////////////////////////////////////
-	// Bitstream format converting to stand format. and, parsing track informaion
+	// Bitstream format converting to standard format. and, parsing track informaion
 	auto media_type = pop_media_packet->GetMediaType();
 	auto track_id = pop_media_packet->GetTrackId();
 
 	auto media_track = _stream->GetTrack(track_id);
 	if (media_track == nullptr)
 	{
-		logte("Cannot find media track. media_type(%s), track_id(%d)", (media_type == MediaType::Video) ? "video" : "audio", track_id);
+		logte("Could not find the media track. track_id: %d, media_type: %s",
+			  track_id,
+			  (media_type == MediaType::Video) ? "video" : "audio");
+
 		return nullptr;
 	}
 
@@ -1004,6 +1011,8 @@ std::shared_ptr<MediaPacket> MediaRouteStream::Pop()
 		break;
 
 		case MediaRouterStreamType::OUTBOUND: {
+			// DumpPacket(pop_media_packet, true);
+
 			if (!ProcessOutboundStream(media_track, pop_media_packet))
 			{
 				return nullptr;
@@ -1022,7 +1031,7 @@ std::shared_ptr<MediaPacket> MediaRouteStream::Pop()
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////
-	// Check for unusual PTS change
+	// Detect abnormal increases in PTS.
 	if (GetInoutType() == MediaRouterStreamType::INBOUND)
 	{
 		int64_t ts_inc = pop_media_packet->GetPts() - _pts_last[track_id];
@@ -1032,8 +1041,12 @@ std::shared_ptr<MediaPacket> MediaRouteStream::Pop()
 		{
 			if (!(media_track->GetCodecId() == cmn::MediaCodecId::Png || media_track->GetCodecId() == cmn::MediaCodecId::Jpeg))
 			{
-				logtw("Detected abnormal increased timestamp. [%3d] lpts: %lld, cpts: %lld, tb(%d/%d), diff_ms: %lld",
-					  track_id, _pts_last[track_id], pop_media_packet->GetPts(), media_track->GetTimeBase().GetNum(), media_track->GetTimeBase().GetDen(), ts_inc_ms);
+				logtw("Detected abnormal increased timestamp. track:%d last.pts: %lld, cur.pts: %lld, tb(%d/%d), diff: %lldms",
+					  track_id, _pts_last[track_id],
+					  pop_media_packet->GetPts(),
+					  media_track->GetTimeBase().GetNum(),
+					  media_track->GetTimeBase().GetDen(),
+					  ts_inc_ms);
 			}
 		}
 	}

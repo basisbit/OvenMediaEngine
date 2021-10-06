@@ -86,14 +86,24 @@ uint32_t TranscodeContext::GetVideoHeight()
 	return _video_height;
 }
 
-void TranscodeContext::SetFrameRate(float val)
+void TranscodeContext::SetFrameRate(double val)
 {
 	_video_frame_rate = val;
 }
 
-float TranscodeContext::GetFrameRate()
+double TranscodeContext::GetFrameRate()
 {
 	return _video_frame_rate;
+}
+
+void TranscodeContext::SetEstimateFrameRate(double val)
+{
+	_video_estimate_frame_rate = val;
+}
+
+double TranscodeContext::GetEstimateFrameRate()
+{
+	return _video_estimate_frame_rate;
 }
 
 const cmn::Timebase &TranscodeContext::GetTimeBase() const
@@ -164,4 +174,24 @@ void TranscodeContext::SetHardwareAccel(bool hwaccel)
 bool TranscodeContext::GetHardwareAccel()
 {
 	return _hwaccel;
+}
+
+void TranscodeContext::SetH264hasBframes(int32_t bframes_count)
+{
+	_h264_has_bframes = bframes_count;
+}
+
+int32_t TranscodeContext::GetH264hasBframes()
+{
+	return _h264_has_bframes;
+}
+
+void TranscodeContext::SetAudioSamplesPerFrame(int samples)
+{
+	_audio_samples_per_frame = samples;
+}
+
+int TranscodeContext::GetAudioSamplesPerFrame()
+{
+	return _audio_samples_per_frame;
 }

@@ -40,6 +40,7 @@ public:
 		_media_type = cmn::MediaType::Video;
 		_time_base.Set(1, 90000);
 		_video_gop = 30;
+		_h264_has_bframes = 0;
 	}
 
 	// Audio
@@ -90,8 +91,11 @@ public:
 	void SetGOP(int32_t val);
 	int32_t GetGOP();
 
-	void SetFrameRate(float val);
-	float GetFrameRate();
+	void SetFrameRate(double val);
+	double GetFrameRate();
+
+	void SetEstimateFrameRate(double val);
+	double GetEstimateFrameRate();
 
 	void SetAudioSample(cmn::AudioSample sample);
 	cmn::AudioSample GetAudioSample() const;
@@ -109,6 +113,9 @@ public:
 
 	void SetHardwareAccel(bool hwaccel);
 	bool GetHardwareAccel();
+
+	void SetAudioSamplesPerFrame(int nbsamples);
+	int GetAudioSamplesPerFrame();
 
 private:
 	// Context type
@@ -132,7 +139,8 @@ private:
 	uint32_t _video_height;
 
 	// Frame Rate
-	float _video_frame_rate;
+	double _video_frame_rate;
+	double _video_estimate_frame_rate;
 
 	// Colorspace
 	// - This variable is temporarily used in the Pixel Format defined by FFMPEG.
@@ -149,6 +157,17 @@ private:
 	// Channel
 	cmn::AudioChannel _audio_channel;
 
+	int _audio_samples_per_frame;
 	// Hardware accelerator
 	bool _hwaccel;
+
+public:
+	//--------------------------------------------------------------------
+	// Informal Options
+	//--------------------------------------------------------------------
+	void SetH264hasBframes(int32_t bframes_count);
+	int32_t GetH264hasBframes();
+
+private:
+	int32_t _h264_has_bframes;
 };

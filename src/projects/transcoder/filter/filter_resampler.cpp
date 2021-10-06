@@ -58,6 +58,9 @@ bool MediaFilterResampler::Configure(const std::shared_ptr<MediaTrack> &input_me
 		logte("Could not allocate variables for filter graph: %p, %p, %p", _filter_graph, _inputs, _outputs);
 		return false;
 	}
+	
+	// Limit the number of filter threads to 1. I think 1 thread is usually enough for audio filtering processing.
+	_filter_graph->nb_threads = 1;
 
 	AVRational input_timebase = TimebaseToAVRational(input_context->GetTimeBase());
 	AVRational output_timebase = TimebaseToAVRational(output_context->GetTimeBase());
@@ -78,24 +81,22 @@ bool MediaFilterResampler::Configure(const std::shared_ptr<MediaTrack> &input_me
 	// Filter graph:
 	//     [abuffer] -> [aresample] -> [asetnsamples] -> [aformat] -> [asettb] -> [abuffersink]
 
-	// Prepare the input filter
+	// Prepare the input parameter
+	std::vector<ov::String> src_params = {
+		ov::String::FormatString("time_base=%s", input_context->GetTimeBase().GetStringExpr().CStr()),
+		ov::String::FormatString("sample_rate=%d", input_context->GetAudioSampleRate()),
+		ov::String::FormatString("sample_fmt=%s", input_context->GetAudioSample().GetName()),
+		ov::String::FormatString("channel_layout=%s", input_context->GetAudioChannel().GetName())};
 
-	// "abuffer" filter
-	ov::String input_args = ov::String::FormatString(
-		// "time_base=%s:sample_rate=%d:sample_fmt=%s:channel_layout=0x%x",
-		"time_base=%s:sample_rate=%d:sample_fmt=%s:channel_layout=%s",
-		input_context->GetTimeBase().GetStringExpr().CStr(),
-		input_context->GetAudioSampleRate(),
-		input_context->GetAudioSample().GetName(),
-		input_context->GetAudioChannel().GetName());
-		// input_context->GetAudioChannel().GetLayout().GetName());
+	ov::String src_args = ov::String::Join(src_params, ":");
 
-	ret = ::avfilter_graph_create_filter(&_buffersrc_ctx, abuffersrc, "in", input_args, nullptr, _filter_graph);
+	ret = ::avfilter_graph_create_filter(&_buffersrc_ctx, abuffersrc, "in", src_args, nullptr, _filter_graph);
 	if (ret < 0)
 	{
 		logte("Could not create audio buffer source filter for resampling: %d", ret);
 		return false;
 	}
+
 
 	// Prepare output filters
 	std::vector<ov::String> filters = {
@@ -109,7 +110,7 @@ bool MediaFilterResampler::Configure(const std::shared_ptr<MediaTrack> &input_me
 		// "aformat" filter options
 		ov::String::FormatString("aformat=sample_fmts=%s:channel_layouts=%s", output_context->GetAudioSample().GetName(), output_context->GetAudioChannel().GetName()),
 		// "asetnsamples" filter options
-		ov::String::FormatString("asetnsamples=n=1024")
+		ov::String::FormatString("asetnsamples=n=%d", output_context->GetAudioSamplesPerFrame())
 	};
 
 	ov::String output_filters = ov::String::Join(filters, ",");
@@ -153,7 +154,7 @@ bool MediaFilterResampler::Configure(const std::shared_ptr<MediaTrack> &input_me
 		return false;
 	}
 
-	logtd("Resampler is enabled for track #%u using parameters. input: %s / outputs: %s", input_media_track->GetId(), input_args.CStr(), output_filters.CStr());
+	logtd("Resampler is enabled for track #%u using parameters. input: %s / outputs: %s", input_media_track->GetId(), src_args.CStr(), output_filters.CStr());
 
 	_input_context = input_context;
 	_output_context = output_context;
@@ -164,7 +165,7 @@ bool MediaFilterResampler::Configure(const std::shared_ptr<MediaTrack> &input_me
 		_kill_flag = false;
 
 		_thread_work = std::thread(&MediaFilterResampler::ThreadFilter, this);
-		pthread_setname_np(_thread_work.native_handle(), "Filter");
+		pthread_setname_np(_thread_work.native_handle(), "Resampler");
 	}
 	catch (const std::system_error &e)
 	{
@@ -212,8 +213,9 @@ void MediaFilterResampler::ThreadFilter()
 
 		_frame->format = frame->GetFormat();
 		_frame->nb_samples = frame->GetNbSamples();
-		_frame->channel_layout = static_cast<uint64_t>(frame->GetChannelLayout());
-		_frame->channels = frame->GetChannels();
+		_frame->channel_layout = static_cast<uint64_t>(frame->GetChannels().GetLayout());
+		// _frame->channel_layout = static_cast<uint64_t>(frame->GetChannelLayout());
+		_frame->channels = frame->GetChannels().GetCounts();
 		_frame->sample_rate = frame->GetSampleRate();
 		_frame->pts = frame->GetPts();
 		_frame->pkt_duration = frame->GetDuration();
@@ -297,9 +299,9 @@ void MediaFilterResampler::ThreadFilter()
 				output_frame->SetFormat(_frame->format);
 				output_frame->SetBytesPerSample(::av_get_bytes_per_sample((AVSampleFormat)_frame->format));
 				output_frame->SetNbSamples(_frame->nb_samples);
-				output_frame->SetChannels(_frame->channels);
+				output_frame->SetChannelCount(_frame->channels);
+				// output_frame->SetChannelLayout((cmn::AudioChannel::Layout)_frame->channel_layout);
 				output_frame->SetSampleRate(_frame->sample_rate);
-				output_frame->SetChannelLayout((cmn::AudioChannel::Layout)_frame->channel_layout);
 				output_frame->SetPts((_frame->pts == AV_NOPTS_VALUE) ? -1L : _frame->pts);
 				output_frame->SetDuration(_frame->pkt_duration);
 

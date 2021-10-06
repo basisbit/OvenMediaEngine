@@ -41,10 +41,6 @@ bool SegmentPublisher::Start(const cfg::cmn::SingularPort &port_config, const cf
 	// Register as observer
 	stream_server->AddObserver(SegmentStreamObserver::GetSharedPtr());
 
-	// Apply CORS settings
-	// TODO(Dimiden): Move this code to the HttpInterceptor
-	//stream_server->SetCrossDomain(cross_domains);
-
 	if (stream_server->Start(has_port ? &address : nullptr, has_tls_port ? &tls_address : nullptr,
 							 DEFAULT_SEGMENT_WORKER_THREAD_COUNT, worker_count) == false)
 	{
@@ -93,11 +89,11 @@ bool SegmentPublisher::OnPlayListRequest(const std::shared_ptr<http::svr::HttpCo
 		return true;
 	}
 
-	auto &vhost_app_name = request_info.vhost_app_name;
-	auto &stream_name = request_info.stream_name;
+	auto vhost_app_name = request_info.vhost_app_name;
+	auto stream_name = request_info.stream_name;
 
 	std::shared_ptr<PlaylistRequestInfo> playlist_request_info;
-	if (HandleSignedX(vhost_app_name, stream_name, client, parsed_url, playlist_request_info) == false)
+	if (HandleAccessControl(vhost_app_name, stream_name, client, parsed_url, playlist_request_info) == false)
 	{
 		client->GetResponse()->SetStatusCode(http::StatusCode::Forbidden);
 		return true;
@@ -274,10 +270,8 @@ void SegmentPublisher::RequestTableUpdateThread()
 			if (request_info->IsExpiredRequest())
 			{
 				// remove and report
-				auto stream_metrics = StreamMetrics(request_info->GetStreamInfo());
-				if (stream_metrics != nullptr)
 				{
-					stream_metrics->OnSessionDisconnected(request_info->GetPublisherType());
+					MonitorInstance->OnSessionDisconnected(request_info->GetStreamInfo(), request_info->GetPublisherType());
 
 					auto playlist_request_info = GetSessionRequestInfoBySegmentRequestInfo(*request_info);
 					stat_log(STAT_LOG_HLS_EDGE_SESSION, "%s,%s,%s,%s,,,%s,%s,%s",
@@ -447,11 +441,9 @@ void SegmentPublisher::UpdateSegmentRequestInfo(SegmentRequestInfo &info)
 	// It is a new viewer!
 	if (new_session)
 	{
-		// New Session!!!
-		auto stream_metrics = StreamMetrics(info.GetStreamInfo());
-		if (stream_metrics != nullptr)
 		{
-			stream_metrics->OnSessionConnected(info.GetPublisherType());
+			// New Session!!!
+			MonitorInstance->OnSessionConnected(info.GetStreamInfo(), info.GetPublisherType());
 
 			auto playlist_request_info = GetSessionRequestInfoBySegmentRequestInfo(info);
 			stat_log(STAT_LOG_HLS_EDGE_SESSION, "%s,%s,%s,%s,,,%s,%s,%s",
@@ -498,7 +490,7 @@ void SegmentPublisher::UpdateSegmentRequestInfo(SegmentRequestInfo &info)
 	}
 }
 
-bool SegmentPublisher::HandleSignedX(const info::VHostAppName &vhost_app_name, const ov::String &stream_name,
+bool SegmentPublisher::HandleAccessControl(info::VHostAppName &vhost_app_name, ov::String &stream_name,
 									 const std::shared_ptr<http::svr::HttpConnection> &client, const std::shared_ptr<const ov::Url> &request_url,
 									 std::shared_ptr<PlaylistRequestInfo> &request_info)
 {
@@ -529,7 +521,8 @@ bool SegmentPublisher::HandleSignedX(const info::VHostAppName &vhost_app_name, c
 	if (signed_policy_result == AccessController::VerificationResult::Pass)
 	{
 		UpdatePlaylistRequestInfo(request_info);
-		return true;
+		// Check Admission Webhooks
+		//return true;
 	}
 	else if (signed_policy_result == AccessController::VerificationResult::Error)
 	{
@@ -546,12 +539,15 @@ bool SegmentPublisher::HandleSignedX(const info::VHostAppName &vhost_app_name, c
 			{
 				// Update the authorized session info
 				UpdatePlaylistRequestInfo(request_info);
-				return true;
+				// Check Admission Webhooks
+				// return true;
 			}
 		}
-
-		logtw("%s", signed_policy->GetErrMessage().CStr());
-		return false;
+		else
+		{
+			logtw("%s", signed_policy->GetErrMessage().CStr());
+			return false;
+		}
 	}
 	else if (signed_policy_result == AccessController::VerificationResult::Off)
 	{
@@ -561,11 +557,11 @@ bool SegmentPublisher::HandleSignedX(const info::VHostAppName &vhost_app_name, c
 		if (signed_token_result == AccessController::VerificationResult::Pass)
 		{
 			UpdatePlaylistRequestInfo(request_info);
-			return true;
+			// Check Admission Webhooks
 		}
 		else if (signed_token_result == AccessController::VerificationResult::Off)
 		{
-			return true;
+			// Check Admission Webhooks
 		}
 		else if (signed_token_result == AccessController::VerificationResult::Error)
 		{
@@ -582,13 +578,48 @@ bool SegmentPublisher::HandleSignedX(const info::VHostAppName &vhost_app_name, c
 				{
 					// Update the authorized session info
 					UpdatePlaylistRequestInfo(request_info);
-					return true;
+					// Check Admission Webhooks
 				}
 			}
-
-			logtw("%s", signed_token->GetErrMessage().CStr());
-			return false;
+			else
+			{
+				logtw("%s", signed_token->GetErrMessage().CStr());
+				return false;
+			}
 		}
+	}
+
+	// Admission Webhooks
+	auto [webhooks_result, admission_webhooks] = VerifyByAdmissionWebhooks(requested_url, remote_address);
+	if(webhooks_result == AccessController::VerificationResult::Off)
+	{
+		// Success
+	}
+	else if(webhooks_result == AccessController::VerificationResult::Pass)
+	{
+		// In HTTP based streaming, lifetime could not work
+		// Lifetime cannot work in HTTP-based streaming. In HTTP-based streaming, the playlist is continuously requested, so the ControlServer can control the session by disallowing it at the appropriate time.
+		// admission_webhooks->GetLifetime();
+
+		// Redirect URL
+		if(admission_webhooks->GetNewURL() != nullptr)
+		{
+			// Change host/app/stream by response
+			auto new_url = admission_webhooks->GetNewURL();
+
+			vhost_app_name = ocst::Orchestrator::GetInstance()->ResolveApplicationNameFromDomain(new_url->Host(), new_url->App());
+			stream_name = new_url->Stream();
+		}
+	}
+	else if(webhooks_result == AccessController::VerificationResult::Error)
+	{
+		logtw("AdmissionWebhooks error : %s", requested_url->ToUrlString().CStr());
+		return false;
+	}
+	else if(webhooks_result == AccessController::VerificationResult::Fail)
+	{
+		logtw("AdmissionWebhooks error : %s", admission_webhooks->GetErrReason().CStr());
+		return false;
 	}
 
 	return true;

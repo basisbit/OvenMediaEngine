@@ -42,8 +42,6 @@ RtcSession::RtcSession(const info::Session &session_info,
 	_peer_sdp = peer_sdp;
 	_ice_port = ice_port;
 	_ws_client = ws_client;
-
-	_stream_metrics = StreamMetrics(*stream);
 }
 
 RtcSession::~RtcSession()
@@ -61,6 +59,11 @@ bool RtcSession::Start()
 	{
 		return false;
 	}
+
+	logtd("[WebRTC Publisher] OfferSDP");
+	logtd("%s\n", _offer_sdp->ToString().CStr());
+	logtd("[WebRTC Publisher] AnswerSDP");
+	logtd("%s", _peer_sdp->ToString().CStr());
 
 	auto offer_media_desc_list = _offer_sdp->GetMediaList();
 	auto peer_media_desc_list = _peer_sdp->GetMediaList();
@@ -101,7 +104,7 @@ bool RtcSession::Start()
 		{
 			_audio_payload_type = first_payload->GetId();
 			_audio_ssrc = offer_media_desc->GetSsrc();
-			_rtp_rtcp->AddRtcpSRGenerator(_audio_payload_type, _audio_ssrc);
+			_rtp_rtcp->AddRtpSender(_audio_payload_type, _audio_ssrc, first_payload->GetCodecRate(), offer_media_desc->GetCname());
 		}
 		else
 		{
@@ -130,7 +133,7 @@ bool RtcSession::Start()
 			}
 
 			_video_ssrc = offer_media_desc->GetSsrc();
-			_rtp_rtcp->AddRtcpSRGenerator(_video_payload_type, _video_ssrc);
+			_rtp_rtcp->AddRtpSender(_video_payload_type, _video_ssrc, first_payload->GetCodecRate(), offer_media_desc->GetCname());
 		}
 	}
 
@@ -288,11 +291,8 @@ bool RtcSession::SendOutgoingData(const std::any &packet)
 
 	// RTP Session must be copied and sent because data is altered due to SRTP.
 	auto copy_packet = std::make_shared<RtpPacket>(*session_packet);
-
-	if(_stream_metrics != nullptr)
-	{
-		_stream_metrics->IncreaseBytesOut(PublisherType::Webrtc, copy_packet->GetData()->GetLength());
-	}
+	
+	MonitorInstance->IncreaseBytesOut(*GetStream(), PublisherType::Webrtc, copy_packet->GetData()->GetLength());
 
 	// rtp_rtcp -> srtp -> dtls -> Edge Node(RtcSession)
 	return _rtp_rtcp->SendRtpPacket(copy_packet);
