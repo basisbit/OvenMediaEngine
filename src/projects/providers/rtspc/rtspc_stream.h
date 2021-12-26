@@ -20,6 +20,9 @@
 
 #include <modules/rtp_rtcp/rtp_depacketizing_manager.h>
 #include <modules/rtp_rtcp/rtp_rtcp.h>
+#include <modules/rtp_rtcp/lip_sync_clock.h>
+
+#include <modules/sdp/session_description.h>
 
 #define RTSP_USER_AGENT_NAME	"OvenMediaEngine"
 namespace pvd
@@ -91,9 +94,9 @@ namespace pvd
 			std::shared_ptr<RtspMessage> _response = nullptr;
 		};
 
-		bool Start() override;
-		bool Play() override;
-		bool Stop() override;
+		bool StartStream(const std::shared_ptr<const ov::Url> &url) override; // Start
+		bool RestartStream(const std::shared_ptr<const ov::Url> &url) override; // Failover
+		bool StopStream() override; // Stop
 
 		bool ConnectTo();
 		bool RequestDescribe();
@@ -103,8 +106,6 @@ namespace pvd
 		void Release();
 
 		int32_t GetNextCSeq();
-
-		bool SendSequenceHeaderIfNeeded();
 
 		bool SendRequestMessage(const std::shared_ptr<RtspMessage> &message);
 		std::shared_ptr<RtspMessage> ReceiveResponse(uint32_t cseq, uint64_t timeout_ms);
@@ -117,9 +118,6 @@ namespace pvd
 
 		bool AddDepacketizer(uint8_t payload_type, RtpDepacketizingManager::SupportedDepacketizerType codec_id);
 		std::shared_ptr<RtpDepacketizingManager> GetDepacketizer(uint8_t payload_type);
-
-		uint64_t AdjustTimestamp(uint8_t payload_type, uint32_t timestamp);
-		uint64_t GetTimestampDelta(uint8_t payload_type, uint32_t timestamp);
 
 		ov::String GenerateControlUrl(ov::String control);
 
@@ -134,21 +132,13 @@ namespace pvd
 		// Values from RTSP
 		int32_t	_cseq = 0;
 
+		SessionDescription _sdp;
+
 		ov::String _content_base;
 		ov::String _rtsp_session_id;
-
-		uint8_t	_video_payload_type = 0;
-		uint8_t _video_rtp_channel_id = 0;
-		uint8_t _video_rtcp_channel_id = 0;
-		ov::String _video_control;
-		ov::String _video_control_url;
 		std::shared_ptr<ov::Data> _h264_extradata_nalu = nullptr;
-
-		uint8_t	_audio_payload_type = 0;
-		uint8_t _audio_rtp_channel_id = 0;
-		uint8_t _audio_rtcp_channel_id = 0;
-		ov::String _audio_control;
-		ov::String _audio_control_url;
+		// ssrc, rtp channel id (rtcp channel id = rtp_channel_id + 1)
+		std::map<uint32_t, uint8_t> _ssrc_channel_id_map;
 
 		// CSeq : RequestMessage
 		std::mutex _response_subscriptions_lock;
@@ -162,6 +152,10 @@ namespace pvd
 		// Payload type : Timestamp
 		std::map<uint8_t, uint32_t>			_last_timestamp_map;
 		std::map<uint8_t, uint32_t>			_timestamp_map;
+
+		LipSyncClock 						_lip_sync_clock;
+
+		bool _sent_sequence_header = false;
 
 		// Statistics
 		int64_t _origin_request_time_msec = 0;

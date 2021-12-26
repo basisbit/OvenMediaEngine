@@ -5,7 +5,7 @@
 #include "base/common_types.h"
 #include "base/info/stream.h"
 #include "base/info/session.h"
-#include "base/mediarouter/media_route_application_observer.h"
+#include "base/mediarouter/mediarouter_application_observer.h"
 #include "base/ovlibrary/semaphore.h"
 #include "base/ovlibrary/string.h"
 #include "config/config.h"
@@ -92,6 +92,7 @@ namespace pub
 		bool OnStreamCreated(const std::shared_ptr<info::Stream> &info) override;
 		bool OnStreamDeleted(const std::shared_ptr<info::Stream> &info) override;
 		bool OnStreamPrepared(const std::shared_ptr<info::Stream> &info) override;
+		bool OnStreamUpdated(const std::shared_ptr<info::Stream> &info) override;
 
 		// Put data in ApplicationWorker's queue.
 		bool OnSendFrame(const std::shared_ptr<info::Stream> &stream,

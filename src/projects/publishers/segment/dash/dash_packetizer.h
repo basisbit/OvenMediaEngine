@@ -26,7 +26,7 @@ enum class DashFileType : int32_t
 class DashPacketizer : public Packetizer
 {
 public:
-	DashPacketizer(const ov::String &app_name, const ov::String &stream_name,
+	DashPacketizer(const ov::String &service_name, const ov::String &app_name, const ov::String &stream_name,
 				   uint32_t segment_count, uint32_t segment_duration,
 				   const ov::String &utc_timing_scheme, const ov::String &utc_timing_value,
 				   std::shared_ptr<MediaTrack> video_track, std::shared_ptr<MediaTrack> audio_track,
@@ -42,35 +42,18 @@ public:
 	static DashFileType GetFileType(const ov::String &file_name);
 
 	//--------------------------------------------------------------------
-	// Override Packetizer
+	// Overriding of Packetizer
 	//--------------------------------------------------------------------
-	bool AppendVideoFrame(const std::shared_ptr<const MediaPacket> &media_packet) override;
-	bool AppendAudioFrame(const std::shared_ptr<const MediaPacket> &media_packet) override;
+	bool ResetPacketizer(uint32_t new_msid) override;
 
-	bool AppendVideoFrame(const std::shared_ptr<const PacketizerFrameData> &frame) override
-	{
-		OV_ASSERT2(false);
-		return false;
-	}
-
-	bool AppendAudioFrame(const std::shared_ptr<const PacketizerFrameData> &frame) override
-	{
-		OV_ASSERT2(false);
-		return false;
-	}
+	bool AppendVideoPacket(const std::shared_ptr<const MediaPacket> &media_packet) override;
+	bool AppendAudioPacket(const std::shared_ptr<const MediaPacket> &media_packet) override;
 
 	std::shared_ptr<const SegmentItem> GetSegmentData(const ov::String &file_name) const override;
 	bool SetSegmentData(Writer &writer, int64_t timestamp);
 
 protected:
 	using DataCallback = std::function<void(const std::shared_ptr<const SampleData> &data, bool new_segment_written)>;
-
-	enum class SetResult
-	{
-		Failed,
-		New,
-		Replaced
-	};
 
 	void SetVideoTrack(const std::shared_ptr<MediaTrack> &video_track);
 	void SetAudioTrack(const std::shared_ptr<MediaTrack> &audio_track);
@@ -88,12 +71,6 @@ protected:
 
 	virtual bool UpdatePlayList();
 
-	SetResult SetSegment(std::map<ov::String, std::shared_ptr<SegmentItem>> &map,
-						 std::deque<std::shared_ptr<SegmentItem>> &queue,
-						 const ov::String &file_name,
-						 std::shared_ptr<SegmentItem> segment,
-						 uint32_t max_segment_count);
-
 	void SetReadyForStreaming() noexcept override;
 
 protected:
@@ -102,6 +79,9 @@ protected:
 
 	bool _video_enable = false;
 	bool _audio_enable = false;
+
+	uint32_t _video_sequence_number = 0U;
+	uint32_t _audio_sequence_number = 0U;
 
 	// To convert from timebase to seconds, multiply by these value
 	double _video_timebase_expr = 0.0;
@@ -133,14 +113,6 @@ protected:
 	std::shared_ptr<SegmentItem> _video_init_file = nullptr;
 	std::shared_ptr<SegmentItem> _audio_init_file = nullptr;
 
-	// Key: filename
-	std::map<ov::String, std::shared_ptr<SegmentItem>> _video_segment_map;
-	std::deque<std::shared_ptr<SegmentItem>> _video_segment_queue;
-
-	// Key: filename
-	std::map<ov::String, std::shared_ptr<SegmentItem>> _audio_segment_map;
-	std::deque<std::shared_ptr<SegmentItem>> _audio_segment_queue;
-
 	// Since the m4s segment cannot be split exactly to the desired duration, an error is inevitable.
 	// As this error results in an incorrect segment index, use the delta to correct the error.
 	//
@@ -153,9 +125,6 @@ protected:
 	// Unit: Timebase of the track
 	int64_t _duration_delta_for_video = 0.0;
 	int64_t _duration_delta_for_audio = 0.0;
-
-	uint32_t _video_segment_count = 0U;
-	uint32_t _audio_segment_count = 0U;
 
 	// Unit: millisecond
 	int64_t _video_start_time = -1LL;

@@ -54,6 +54,8 @@ MediaRouteStream::MediaRouteStream(const std::shared_ptr<info::Stream> &stream)
 	logti("Trying to create media route stream: name(%s) id(%u)", stream->GetName().CStr(), stream->GetId());
 	_inout_type = MediaRouterStreamType::UNKNOWN;
 
+	_max_warning_count_bframe = 0;
+
 	_stat_start_time = std::chrono::system_clock::now();
 	_stop_watch.Start();
 }
@@ -105,6 +107,18 @@ void MediaRouteStream::OnStreamPrepared(bool completed)
 bool MediaRouteStream::IsStreamPrepared()
 {
 	return _is_stream_prepared;
+}
+
+void MediaRouteStream::Flush()
+{
+	// Clear queued apckets
+	_packets_queue.Clear();
+	// Clear stahsed Packets
+	_media_packet_stash.clear();
+
+	_are_all_tracks_parsed = false;
+
+	_is_stream_prepared = false;
 }
 
 #include <base/ovcrypto/base_64.h>
@@ -205,20 +219,22 @@ bool MediaRouteStream::ProcessH264AVCCStream(std::shared_ptr<MediaTrack> &media_
 			[[maybe_unused]] auto skipped = read_stream.Skip(nal_length);
 			OV_ASSERT2(skipped == nal_length);
 
-			H264NalUnitHeader header;
-			if (H264Parser::ParseNalUnitHeader(nalu->GetDataAs<uint8_t>(), H264_NAL_UNIT_HEADER_SIZE, header) == true)
+			H264NalUnitHeader nal_header;
+			if (H264Parser::ParseNalUnitHeader(nalu->GetDataAs<uint8_t>(), H264_NAL_UNIT_HEADER_SIZE, nal_header) == true)
 			{
-				if (header.GetNalUnitType() == H264NalUnitType::IdrSlice)
+				// logtd("nal_unit_type : %s", NalUnitTypeToStr((uint8_t)nal_header.GetNalUnitType()).CStr());
+
+				if (nal_header.GetNalUnitType() == H264NalUnitType::IdrSlice)
 				{
 					media_packet->SetFlag(MediaPacketFlag::Key);
 					has_idr = true;
 				}
-				else if (header.GetNalUnitType() == H264NalUnitType::Sps)
+				else if (nal_header.GetNalUnitType() == H264NalUnitType::Sps)
 				{
 					// logtd("[SPS] %s ", ov::Base64::Encode(nalu).CStr());
 					has_sps = true;
 				}
-				else if (header.GetNalUnitType() == H264NalUnitType::Pps)
+				else if (nal_header.GetNalUnitType() == H264NalUnitType::Pps)
 				{
 					// logtd("[PPS] %s ", ov::Base64::Encode(nalu).CStr());
 					has_pps = true;
@@ -329,6 +345,7 @@ bool MediaRouteStream::ProcessH264AnnexBStream(std::shared_ptr<MediaTrack> &medi
 			logte("Could not parse H264 Nal unit header");
 			return false;
 		}
+		// logtd("nal_unit_type : %s", NalUnitTypeToStr((uint8_t)nal_header.GetNalUnitType()).CStr());
 
 		if (nal_header.GetNalUnitType() == H264NalUnitType::Sps)
 		{
@@ -751,12 +768,42 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 	auto track_id = media_track->GetId();
 
 	_stat_recv_pkt_lpts[track_id] = media_packet->GetPts();
-
 	_stat_recv_pkt_ldts[track_id] = media_packet->GetDts();
-
 	_stat_recv_pkt_size[track_id] += media_packet->GetData()->GetLength();
-
 	_stat_recv_pkt_count[track_id]++;
+
+	// Check b-frame of H264/H265 codec
+	//
+	// Basically, in order to check the presence of B-Frame, the SliceType of H264 should be checked,
+	// but in general, it is assumed that there is a B-frame when PTS and DTS are different. This has a performance advantage.
+	switch (media_packet->GetBitstreamFormat())
+	{
+		case cmn::BitstreamFormat::H264_ANNEXB:
+		case cmn::BitstreamFormat::H264_AVCC:
+		case cmn::BitstreamFormat::H265_ANNEXB:
+			if (_max_warning_count_bframe < 10)
+			{
+				if (media_packet->GetPts() != media_packet->GetDts())
+				{
+					media_track->SetBframes(true);
+				}
+
+				// Display a warning message that b-frame exists
+				if (media_track->HasBframes() == true)
+				{
+					logtw("b-frame has been detected in the %d track of %s %s/%s stream",
+						  track_id,
+						  _inout_type == MediaRouterStreamType::INBOUND ? "inbound" : "outbound",
+						  _stream->GetApplicationInfo().GetName().CStr(),
+						  _stream->GetName().CStr());
+
+					_max_warning_count_bframe++;
+				}
+			}
+			break;
+		default:
+			break;
+	}
 
 	// 	Diffrence time of received first packet with uptime.
 	if (_stat_first_time_diff[track_id] == 0)
@@ -784,16 +831,19 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 			auto track = iter.second;
 
 			int64_t rescaled_last_pts = (int64_t)((double)(_stat_recv_pkt_lpts[track_id] * 1000) * track->GetTimeBase().GetExpr());
-
 			int64_t first_delay = _stat_first_time_diff[track_id];
-
 			int64_t last_delay = uptime - rescaled_last_pts;
 
 			// calc min/max pts
 			if (min_pts == -1LL)
+			{
 				min_pts = rescaled_last_pts;
+			}
+
 			if (max_pts == -1LL)
+			{
 				max_pts = rescaled_last_pts;
+			}
 
 			min_pts = std::min(min_pts, rescaled_last_pts);
 			max_pts = std::max(max_pts, rescaled_last_pts);
@@ -808,8 +858,7 @@ void MediaRouteStream::UpdateStatistics(std::shared_ptr<MediaTrack> &media_track
 										track->GetTimeBase().GetNum(), track->GetTimeBase().GetDen(),
 										_stat_recv_pkt_count[track_id],
 										ov::Converter::ToSiString(_stat_recv_pkt_size[track_id], 1).CStr(),
-										_stat_recv_pkt_size[track_id] / (uptime/1000) * 8 / 1000
-										);
+										_stat_recv_pkt_size[track_id] / (uptime / 1000) * 8 / 1000);
 		}
 
 		ov::String stat_stream_str = "";
@@ -1034,24 +1083,29 @@ std::shared_ptr<MediaPacket> MediaRouteStream::Pop()
 	// Detect abnormal increases in PTS.
 	if (GetInoutType() == MediaRouterStreamType::INBOUND)
 	{
-		int64_t ts_inc = pop_media_packet->GetPts() - _pts_last[track_id];
-		int64_t ts_inc_ms = ts_inc * media_track->GetTimeBase().GetExpr();
-
-		if (std::abs(ts_inc_ms) > PTS_CORRECT_THRESHOLD_MS)
+		auto it = _pts_last.find(track_id);
+		if(it != _pts_last.end())
 		{
-			if (!(media_track->GetCodecId() == cmn::MediaCodecId::Png || media_track->GetCodecId() == cmn::MediaCodecId::Jpeg))
+			int64_t ts_inc = pop_media_packet->GetPts() - _pts_last[track_id];
+			int64_t ts_inc_ms = ts_inc * media_track->GetTimeBase().GetExpr();
+
+			if (std::abs(ts_inc_ms) > PTS_CORRECT_THRESHOLD_MS)
 			{
-				logtw("Detected abnormal increased timestamp. track:%d last.pts: %lld, cur.pts: %lld, tb(%d/%d), diff: %lldms",
-					  track_id, _pts_last[track_id],
-					  pop_media_packet->GetPts(),
-					  media_track->GetTimeBase().GetNum(),
-					  media_track->GetTimeBase().GetDen(),
-					  ts_inc_ms);
+				if (!(media_track->GetCodecId() == cmn::MediaCodecId::Png || media_track->GetCodecId() == cmn::MediaCodecId::Jpeg))
+				{
+					logtw("Detected abnormal increased timestamp. track:%u last.pts: %lld, cur.pts: %lld, tb(%d/%d), diff: %lldms",
+						track_id, _pts_last[track_id],
+						pop_media_packet->GetPts(),
+						media_track->GetTimeBase().GetNum(),
+						media_track->GetTimeBase().GetDen(),
+						ts_inc_ms);
+				}
 			}
 		}
+
+		_pts_last[track_id] = pop_media_packet->GetPts();
+		_dts_last[track_id] = pop_media_packet->GetDts();
 	}
-	_pts_last[track_id] = pop_media_packet->GetPts();
-	_dts_last[track_id] = pop_media_packet->GetDts();
 
 	////////////////////////////////////////////////////////////////////////////////////
 	// Statistics

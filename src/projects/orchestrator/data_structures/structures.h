@@ -9,7 +9,7 @@
 #pragma once
 
 #include <base/info/host.h>
-#include <base/mediarouter/media_route_application_observer.h>
+#include <base/mediarouter/mediarouter_application_observer.h>
 
 #include <regex>
 
@@ -95,6 +95,7 @@ namespace ocst
 			virtual bool OnStreamCreated(const info::Application &app_info, const std::shared_ptr<info::Stream> &info) = 0;
 			virtual bool OnStreamDeleted(const info::Application &app_info, const std::shared_ptr<info::Stream> &info) = 0;
 			virtual bool OnStreamPrepared(const info::Application &app_info, const std::shared_ptr<info::Stream> &info) = 0;
+			virtual bool OnStreamUpdated(const info::Application &app_info, const std::shared_ptr<info::Stream> &info) = 0;
 		};
 
 		Application(CallbackInterface *callback, const info::Application &app_info);
@@ -106,6 +107,7 @@ namespace ocst
 		bool OnStreamCreated(const std::shared_ptr<info::Stream> &info) override;
 		bool OnStreamDeleted(const std::shared_ptr<info::Stream> &info) override;
 		bool OnStreamPrepared(const std::shared_ptr<info::Stream> &info) override;
+		bool OnStreamUpdated(const std::shared_ptr<info::Stream> &info) override;
 		bool OnSendFrame(const std::shared_ptr<info::Stream> &info, const std::shared_ptr<MediaPacket> &packet) override;
 
 		ObserverType GetObserverType() override;
@@ -116,7 +118,7 @@ namespace ocst
 
 	struct VirtualHost
 	{
-		VirtualHost(const info::Host &host_info);
+		VirtualHost(const info::Host &new_host_info);
 
 		void MarkAllAs(ItemState state);
 		bool MarkAllAs(ItemState expected_old_state, ItemState state);

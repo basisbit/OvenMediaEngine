@@ -16,7 +16,7 @@
 
 #include "base/info/stream.h"
 #include "base/mediarouter/media_buffer.h"
-#include "base/mediarouter/media_route_application_connector.h"
+#include "base/mediarouter/mediarouter_application_connector.h"
 #include "base/mediarouter/media_type.h"
 
 enum class MediaRouterStreamType : int8_t
@@ -53,6 +53,8 @@ public:
 	bool IsStreamPrepared();
 	bool AreAllTracksParsed();
 
+	void Flush();
+	
 private:
 	void DropNonDecodingPackets();
 
@@ -110,6 +112,10 @@ private:
 	ov::StopWatch _stop_watch;
 	std::chrono::time_point<std::chrono::system_clock> _last_recv_time;
 	std::chrono::time_point<std::chrono::system_clock> _stat_start_time;
+
+
+	uint32_t _max_warning_count_bframe;
+
 
 	void DumpPacket(std::shared_ptr<MediaPacket> &media_packet, bool dump = false);
 };

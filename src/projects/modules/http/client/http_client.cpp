@@ -268,11 +268,12 @@ namespace http
 
 			if (is_https)
 			{
-				_tls_data = std::make_shared<ov::TlsClientData>(ov::TlsClientData::Method::Tls);
+				std::shared_ptr<const ov::Error> error;
+				_tls_data = std::make_shared<ov::TlsClientData>(ov::TlsContext::CreateClientContext(&error), (_blocking_mode == ov::BlockingMode::NonBlocking));
 
 				if (_tls_data == nullptr)
 				{
-					return ov::Error::CreateError("HTTP", "Could not create TLS data");
+					return error;
 				}
 
 				_tls_data->SetIoCallback(GetSharedPtrAs<ov::TlsClientDataIoCallback>());
@@ -369,7 +370,7 @@ namespace http
 				OV_ASSERT2(_url.IsEmpty() == false);
 				OV_ASSERT2(_parsed_url != nullptr);
 
-				logtd("Request an URL: %s (address: %s)...", url.CStr(), address.ToString().CStr());
+				logtd("Request an URL: %s (address: %s)...", url.CStr(), address.ToString(false).CStr());
 
 				// Convert milliseconds to timeval
 				_socket->SetRecvTimeout(
@@ -424,9 +425,7 @@ namespace http
 			{
 				if (tls_data != nullptr)
 				{
-					process_data = tls_data->Decrypt();
-
-					if (process_data == nullptr)
+					if (tls_data->Decrypt(&process_data) == false)
 					{
 						error = ov::Error::CreateError("HTTP", "Could not decrypt data");
 					}

@@ -27,9 +27,9 @@ namespace pvd
 			CONNECTED,
 			DESCRIBED,
 			PLAYING,
-			STOPPING,
-			STOPPED,
-			ERROR
+			STOPPED,	// will be retried, Set super class
+			ERROR,		// will be retried
+			TERMINATED	// will be deleted, Set super class
 		};
 
 		State GetState(){return _state;};
@@ -65,8 +65,20 @@ namespace pvd
 		bool SetState(State state);
 		bool SendFrame(const std::shared_ptr<MediaPacket> &packet);
 
-		State 	_state = State::IDLE;
+		void ResetSourceStreamTimestamp();
 
+		// 
+		uint64_t AdjustTimestampByBase(uint32_t track_id, uint64_t timestamp, uint64_t max_timestamp);
+		uint64_t AdjustTimestampByDelta(uint32_t track_id, uint64_t timestamp, uint64_t max_timestamp);
+		uint64_t GetTimestampDelta(uint32_t track_id, uint64_t timestamp, uint64_t max_timestamp);
 		std::shared_ptr<pvd::Application> _application = nullptr;
+
+	private:
+		// Track ID : Timestamp
+		std::map<uint32_t, uint64_t>			_source_timestamp_map;
+		std::map<uint32_t, uint64_t>			_last_timestamp_map;
+		std::map<uint32_t, uint64_t>			_base_timestamp_map;
+
+		State 	_state = State::IDLE;
 	};
 }

@@ -121,6 +121,12 @@ namespace ocst
 		return callback->OnStreamPrepared(app_info, info);
 	}
 
+	bool Application::OnStreamUpdated(const std::shared_ptr<info::Stream> &info)
+	{
+		return callback->OnStreamPrepared(app_info, info);
+	}
+
+
 
 	bool Application::OnSendFrame(const std::shared_ptr<info::Stream> &info, const std::shared_ptr<MediaPacket> &packet)
 	{
@@ -136,8 +142,8 @@ namespace ocst
 	//--------------------------------------------------------------------
 	// ocst::VirtualHost
 	//--------------------------------------------------------------------
-	VirtualHost::VirtualHost(const info::Host &host_info)
-		: host_info(host_info), state(ItemState::New)
+	VirtualHost::VirtualHost(const info::Host &new_host_info)
+		: host_info(new_host_info), state(ItemState::New)
 
 	{
 	}

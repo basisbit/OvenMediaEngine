@@ -19,8 +19,8 @@
 
 #include "base/info/stream.h"
 #include "base/mediarouter/media_buffer.h"
-#include "base/mediarouter/media_route_application_connector.h"
-#include "base/mediarouter/media_route_application_observer.h"
+#include "base/mediarouter/mediarouter_application_connector.h"
+#include "base/mediarouter/mediarouter_application_observer.h"
 #include "transcoder_stream.h"
 
 class TranscodeApplication : public MediaRouteApplicationConnector, public MediaRouteApplicationObserver
@@ -50,6 +50,7 @@ public:
 	bool OnStreamCreated(const std::shared_ptr<info::Stream> &stream) override;
 	bool OnStreamDeleted(const std::shared_ptr<info::Stream> &stream) override;
 	bool OnStreamPrepared(const std::shared_ptr<info::Stream> &stream) override;
+	bool OnStreamUpdated(const std::shared_ptr<info::Stream> &stream) override;
 
 	bool OnSendFrame(const std::shared_ptr<info::Stream> &stream, const std::shared_ptr<MediaPacket> &packet) override;
 

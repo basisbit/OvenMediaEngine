@@ -265,7 +265,7 @@ namespace ov
 
 		while (_stop_epoll_thread == false)
 		{
-			int count = EpollWait(3000);
+			int count = EpollWait(100);
 
 			if (count < 0)
 			{
@@ -800,7 +800,7 @@ namespace ov
 			}
 			else
 			{
-				logae("Could not delete the socket %d from epoll: %s\n%s",
+				logae("Could not delete the socket #%d from epoll: %s\n%s",
 					  native_handle,
 					  error->ToString().CStr(),
 					  StackTrace::GetStackTrace().CStr());

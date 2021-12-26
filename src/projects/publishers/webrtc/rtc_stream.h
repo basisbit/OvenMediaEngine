@@ -43,6 +43,7 @@ public:
 private:
 	bool Start() override;
 	bool Stop() override;
+	bool OnStreamUpdated(const std::shared_ptr<info::Stream> &info) override;
 
 	void MakeRtpVideoHeader(const CodecSpecificInfo *info, RTPVideoHeader *rtp_video_header);
 	uint16_t AllocateVP8PictureID();
@@ -68,6 +69,10 @@ private:
 	bool _rtx_enabled = true;
 	bool _ulpfec_enabled = true;
 	bool _jitter_buffer_enabled = false;
+	bool _playout_delay_enabled = false;
+	int _playout_delay_min = 0;
+	int _playout_delay_max = 0;
+
 	uint32_t _worker_count = 0;
 
 	JitterBufferDelay	_jitter_buffer_delay;

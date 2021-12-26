@@ -15,8 +15,7 @@ RtpPacket::RtpPacket()
 	_padding_size = 0;
 	_extension_size = 0;
 
-	_data = std::make_shared<ov::Data>();
-	_data->Reserve(RTP_DEFAULT_MAX_PACKET_SIZE);
+	_data = std::make_shared<ov::Data>(RTP_DEFAULT_MAX_PACKET_SIZE);
 	_data->SetLength(FIXED_HEADER_SIZE);
 	_buffer = _data->GetWritableDataAs<uint8_t>();
 
@@ -45,15 +44,18 @@ RtpPacket::RtpPacket(RtpPacket &src)
 	_extension_size = src._extension_size;
 	_sequence_number = src._sequence_number;
 	_timestamp = src._timestamp;
-	_ntp_timestamp = src._ntp_timestamp;
-	_is_keyframe = src._is_keyframe;
-	_is_first_packet_of_frame = src._is_first_packet_of_frame;
-	_is_video_packet = src._is_video_packet;
-
+	_extension_size = src._extension_size;
+	_extensions = src._extensions;
 	_data = src._data->Clone();
 	_data->SetLength(src._data->GetLength());
 	_buffer = _data->GetWritableDataAs<uint8_t>();
 
+	// Extra Data
+	_ntp_timestamp = src._ntp_timestamp;
+	_is_keyframe = src._is_keyframe;
+	_is_first_packet_of_frame = src._is_first_packet_of_frame;
+	_is_video_packet = src._is_video_packet;
+	_rtsp_channel = src._rtsp_channel;
 	_created_time = std::chrono::system_clock::now();
 
 	_is_available = true;
@@ -113,7 +115,6 @@ bool RtpPacket::Parse(const std::shared_ptr<const ov::Data> &data)
 
 	//TODO(Getroot): Parse CSRC
 	_payload_offset = FIXED_HEADER_SIZE + (_cc * 4);
-	
 	if(_has_padding)
 	{
 		_padding_size = buffer[buffer_size -1];
@@ -150,19 +151,48 @@ bool RtpPacket::Parse(const std::shared_ptr<const ov::Data> &data)
 			return false;
 		}
 
-		[[maybe_unused]]uint16_t extension_profile = ByteReader<uint16_t>::ReadBigEndian(&buffer[_payload_offset]);
+		uint16_t extension_profile = ByteReader<uint16_t>::ReadBigEndian(&buffer[_payload_offset]);
 		_extension_size = ByteReader<uint16_t>::ReadBigEndian(&buffer[_payload_offset + 2]) * 4;
-
 		if(extension_offset + _extension_size > buffer_size)
 		{
 			return false;
 		}
 
-		// https://tools.ietf.org/html/rfc8285
-		// A General Mechanism for RTP Header Extensions
-		// TODO(Getroot): Extract extensions
-		
 		_payload_offset = extension_offset + _extension_size;
+
+		while(extension_offset < _payload_offset)
+		{
+			// Padding
+			if(buffer[extension_offset] == 0)
+			{
+				extension_offset ++;
+				continue;
+			}
+
+			uint8_t id = 0;
+			uint8_t len = 0;
+
+			// One Byte Header
+			if(extension_profile == ONE_BYTE_EXTENSION_ID)
+			{
+				auto header = buffer[extension_offset++];
+				id = header >> 4;
+
+				// https://datatracker.ietf.org/doc/html/rfc8285#section-4.2
+				// The 4-bit length is the number, minus one, of data bytes of this
+   				// header extension element following the one-byte header.
+				len = (header & 0xF) + 1;
+			}
+			// Two Byte Header
+			else
+			{
+				id = buffer[extension_offset++];
+				len = buffer[extension_offset++];
+			}
+
+			_extensions.emplace(id, ov::Data(&buffer[extension_offset], len));
+			extension_offset += len;
+		}
 	}
 
 	if(_payload_offset + _padding_size > buffer_size)
@@ -232,6 +262,23 @@ std::vector<uint32_t> RtpPacket::Csrcs() const
 
 	return csrcs;
 }
+
+std::map<uint8_t, ov::Data> RtpPacket::Extensions() const
+{
+	return _extensions;
+}
+
+std::optional<ov::Data>	RtpPacket::GetExtension(uint8_t id) const
+{
+	auto it = _extensions.find(id);
+	if(it == _extensions.end())
+	{
+		return {};
+	}
+	
+	return it->second;
+}
+
 uint8_t* RtpPacket::Buffer() const
 {
 	return &_buffer[0];
@@ -293,16 +340,15 @@ void RtpPacket::SetCsrcs(const std::vector<uint32_t>& csrcs)
 	// Is there no Padding?
 	// Is there no more than 15 csrcs? (RFC)
 	// Isn't there insufficient buffer reserve?
-
 	_payload_offset = FIXED_HEADER_SIZE + 4 * csrcs.size();
-
-	// Enter csrs size in the lower 4 bits of the first byte
-	_cc = csrcs.size();
-	_buffer[0] = (_buffer[0] & 0xF0) | _cc;
 
 	// Adjust _buffer size
 	_data->SetLength(_payload_offset);
 	_buffer = _data->GetWritableDataAs<uint8_t>();
+
+	// Enter csrs size in the lower 4 bits of the first byte
+	_cc = csrcs.size();
+	_buffer[0] = (_buffer[0] & 0xF0) | _cc;
 
 	size_t offset = FIXED_HEADER_SIZE;
 	for (uint32_t csrc : csrcs)
@@ -310,6 +356,56 @@ void RtpPacket::SetCsrcs(const std::vector<uint32_t>& csrcs)
 		ByteWriter<uint32_t>::WriteBigEndian(&_buffer[offset], csrc);
 		offset += 4;
 	}
+}
+
+void RtpPacket::SetExtensions(const RtpHeaderExtensions& extensions)
+{
+	auto extension_length = extensions.GetTotalDataLength();
+	auto pad_length = (4 - (extension_length % 4)) % 4;
+
+	extension_length += pad_length;
+
+	// Payload offset = RTP Header(12) + CSRCs + Extension Header(4) + Extensions
+	_payload_offset = FIXED_HEADER_SIZE + (_cc * 4) + EXTENSION_HEADER_SIZE + extension_length;
+	_data->SetLength(_payload_offset);
+	_buffer = _data->GetWritableDataAs<uint8_t>();
+
+	// Set X bit to 1
+	_has_extension = true;
+	_buffer[0] = _buffer[0] | 0x10;
+
+	auto offset = FIXED_HEADER_SIZE + (_cc * 4);
+
+	if(extensions.GetHeaderType() == RtpHeaderExtension::HeaderType::ONE_BYTE_HEADER)
+	{
+		// Write profile (Use Two Byte Header)
+		ByteWriter<uint8_t>::WriteBigEndian(&_buffer[offset], 0xBE);
+		ByteWriter<uint8_t>::WriteBigEndian(&_buffer[offset + 1], 0xDE);
+	}
+	else
+	{
+		// Write profile (Use Two Byte Header)
+		ByteWriter<uint8_t>::WriteBigEndian(&_buffer[offset], 0x10);
+		ByteWriter<uint8_t>::WriteBigEndian(&_buffer[offset + 1], 0x00);
+	}
+	offset += 2;
+
+	// Wirte Length
+	ByteWriter<uint16_t>::WriteBigEndian(&_buffer[offset], extension_length / 4);
+	offset += 2;
+
+	// Write Extensions
+	auto extensions_map = extensions.GetMap();
+	for(const auto [id, extension] : extensions_map)
+	{
+		auto extension_data = extension->Marshal(extensions.GetHeaderType());
+		memcpy(&_buffer[offset], extension_data->GetData(), extension_data->GetLength());
+		offset += extension_data->GetLength();
+	}
+
+	// Set padding
+	memset(&_buffer[offset], 0, pad_length);
+	offset += pad_length;
 }
 
 size_t RtpPacket::HeadersSize() const

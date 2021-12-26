@@ -54,6 +54,7 @@ public:
 	void SetMediaType(MediaType type);
 	bool SetMediaType(const ov::String &type);
 	const MediaType GetMediaType() const;
+	const ov::String GetMediaTypeStr() const;
 	void SetPort(uint16_t port);
 	uint16_t GetPort() const;
 	void UseDtls(bool flag);
@@ -114,6 +115,11 @@ public:
 	uint32_t GetRtxSsrc() const;
 	ov::String GetCname() const;
 
+	// a=extmap:1 urn:ietf:params:rtp-hdrext:framemarking
+	void AddExtmap(uint8_t id, ov::String attribute);
+	std::map<uint8_t, ov::String> GetExtmap() const;
+	ov::String GetExtmapItem(uint8_t id) const;
+
 private:
 	bool UpdateData(ov::String &sdp) override;
 	bool ParsingMediaLine(char type, std::string content);
@@ -146,6 +152,8 @@ private:
 	uint32_t _ssrc = 0;
 	uint32_t _rtx_ssrc = 0;
 	ov::String _cname;
+
+	std::map<uint8_t, ov::String> _extmap;
 
 	std::vector<std::shared_ptr<PayloadAttr>> _payload_list;
 };

@@ -33,12 +33,12 @@ static inline void DumpSegmentToFile(const std::shared_ptr<const SegmentItem> &s
 #endif	// DEBUG
 }
 
-DashPacketizer::DashPacketizer(const ov::String &app_name, const ov::String &stream_name,
+DashPacketizer::DashPacketizer(const ov::String &service_name, const ov::String &app_name, const ov::String &stream_name,
 							   uint32_t segment_count, uint32_t segment_duration,
 							   const ov::String &utc_timing_scheme, const ov::String &utc_timing_value,
 							   std::shared_ptr<MediaTrack> video_track, std::shared_ptr<MediaTrack> audio_track,
 							   const std::shared_ptr<ChunkedTransferInterface> &chunked_transfer)
-	: Packetizer(app_name, stream_name,
+	: Packetizer(service_name, app_name, stream_name,
 				 segment_count, segment_count * 2, segment_duration,
 				 video_track, audio_track,
 				 chunked_transfer),
@@ -205,7 +205,7 @@ bool DashPacketizer::PrepareVideoInitIfNeeded()
 		return true;
 	}
 
-	if ((_video_m4s_writer.Prepare() && _video_m4s_writer.Flush()) == false)
+	if ((_video_m4s_writer.Prepare(GetServiceName()) && _video_m4s_writer.Flush()) == false)
 	{
 		return false;
 	}
@@ -246,7 +246,7 @@ bool DashPacketizer::PrepareAudioInitIfNeeded()
 		return true;
 	}
 
-	if ((_audio_m4s_writer.Prepare() && _audio_m4s_writer.Flush()) == false)
+	if ((_audio_m4s_writer.Prepare(GetServiceName()) && _audio_m4s_writer.Flush()) == false)
 	{
 		return false;
 	}
@@ -339,7 +339,12 @@ bool DashPacketizer::WriteAudioSegment()
 	return false;
 }
 
-bool DashPacketizer::AppendVideoFrame(const std::shared_ptr<const MediaPacket> &media_packet)
+bool DashPacketizer::ResetPacketizer(uint32_t new_msid)
+{
+	return true;
+}
+
+bool DashPacketizer::AppendVideoPacket(const std::shared_ptr<const MediaPacket> &media_packet)
 {
 	// logap("#%d [%s] Received a packet: %15ld, %15ld",
 	// 	  media_packet->GetTrackId(), (media_packet->GetMediaType() == cmn::MediaType::Video) ? "V" : "A",
@@ -405,7 +410,7 @@ bool DashPacketizer::AppendVideoFrame(const std::shared_ptr<const MediaPacket> &
 	return result;
 }
 
-bool DashPacketizer::AppendAudioFrame(const std::shared_ptr<const MediaPacket> &media_packet)
+bool DashPacketizer::AppendAudioPacket(const std::shared_ptr<const MediaPacket> &media_packet)
 {
 	// logap("#%d [%s] Received a packet: %15ld, %15ld",
 	// 	  media_packet->GetTrackId(), (media_packet->GetMediaType() == cmn::MediaType::Video) ? "V" : "A",
@@ -719,29 +724,11 @@ std::shared_ptr<const SegmentItem> DashPacketizer::GetSegmentData(const ov::Stri
 		case DashFileType::AudioInit:
 			return _audio_init_file;
 
-		case DashFileType::VideoSegment: {
-			std::unique_lock<std::mutex> lock(_video_segment_mutex);
+		case DashFileType::VideoSegment:
+			return _video_segment_queue.GetSegmentData(file_name);
 
-			auto item = _video_segment_map.find(file_name);
-			if (item != _video_segment_map.end())
-			{
-				return item->second;
-			}
-
-			return nullptr;
-		}
-
-		case DashFileType::AudioSegment: {
-			std::unique_lock<std::mutex> lock(_audio_segment_mutex);
-
-			auto item = _audio_segment_map.find(file_name);
-			if (item != _audio_segment_map.end())
-			{
-				return item->second;
-			}
-
-			return nullptr;
-		}
+		case DashFileType::AudioSegment:
+			return _audio_segment_queue.GetSegmentData(file_name);
 
 		default:
 			break;
@@ -749,65 +736,6 @@ std::shared_ptr<const SegmentItem> DashPacketizer::GetSegmentData(const ov::Stri
 
 	logad("Unknown file is requested: %s", file_name.CStr());
 	return nullptr;
-}
-
-DashPacketizer::SetResult DashPacketizer::SetSegment(std::map<ov::String, std::shared_ptr<SegmentItem>> &map,
-													 std::deque<std::shared_ptr<SegmentItem>> &queue,
-													 const ov::String &file_name,
-													 std::shared_ptr<SegmentItem> segment,
-													 uint32_t max_segment_count)
-{
-	static_assert(std::is_reference<decltype(segment)>::value == false, "\"segment\" must be not a reference type - because the shared_ptr is swapped below, it can cause other side-effects");
-
-	auto item = map.find(file_name);
-	SetResult result = SetResult::Failed;
-
-	if (item == map.end())
-	{
-		// There is no duplicated segment
-		queue.push_back(segment);
-
-		if (queue.size() > max_segment_count)
-		{
-			size_t erase_count = queue.size() - max_segment_count;
-
-			auto start = queue.begin();
-			auto end = queue.begin() + erase_count;
-
-			// Remove items with in [0, erase_count)
-			std::for_each(start, end, [&map](const std::shared_ptr<SegmentItem> &segment) -> void {
-				map.erase(segment->file_name);
-			});
-			queue.erase(queue.begin(), queue.begin() + erase_count);
-		}
-
-		result = SetResult::New;
-	}
-	else
-	{
-		logaw("%s already exists - This is an abnormal situation, and DASH may not work properly", file_name.CStr());
-
-		map.erase(item);
-
-		for (auto segment_item = queue.begin(); segment_item != queue.end(); ++segment_item)
-		{
-			auto &old_segment = *segment_item;
-
-			if (old_segment->file_name == file_name)
-			{
-				old_segment.swap(segment);
-				result = SetResult::Replaced;
-			}
-		}
-
-		OV_ASSERT2(result != SetResult::Failed);
-	}
-
-	map[file_name] = segment;
-
-	DumpSegmentToFile(segment);
-
-	return result;
 }
 
 bool DashPacketizer::SetSegmentData(Writer &writer, int64_t timestamp)
@@ -828,38 +756,32 @@ bool DashPacketizer::SetSegmentData(Writer &writer, int64_t timestamp)
 	switch (media_type)
 	{
 		case Writer::MediaType::Video: {
-			std::unique_lock<std::mutex> lock(_video_segment_mutex);
+			auto file_name = GetFileName(_video_sequence_number, cmn::MediaType::Video);
 
-			auto file_name = GetFileName(_video_segment_count, cmn::MediaType::Video);
-			auto timestamp_in_ms = timestamp * _video_timebase_expr_ms;
-			auto duration_in_ms = duration * _video_timebase_expr_ms;
+			auto segment = _video_segment_queue.Append(
+				SegmentDataType::Video, _video_sequence_number++,
+				file_name,
+				timestamp, timestamp * _video_timebase_expr_ms,
+				duration, duration * _video_timebase_expr_ms,
+				data);
 
-			auto segment = std::make_shared<SegmentItem>(SegmentDataType::Video, _video_segment_count++, file_name, timestamp, timestamp_in_ms, duration, duration_in_ms, data);
+			DumpSegmentToFile(segment);
 
-			if (SetSegment(_video_segment_map, _video_segment_queue, file_name, segment, _segment_save_count) == SetResult::Failed)
-			{
-				return false;
-			}
-
-			logad("Video segment is added, file: %s, pts: %" PRId64 "ms, duration: %" PRIu64 "ms, data size: %zubytes", file_name.CStr(), timestamp_in_ms, duration_in_ms, data->GetLength());
 			break;
 		}
 
 		case Writer::MediaType::Audio: {
-			std::unique_lock<std::mutex> lock(_audio_segment_mutex);
+			auto file_name = GetFileName(_audio_sequence_number, cmn::MediaType::Audio);
 
-			auto file_name = GetFileName(_audio_segment_count, cmn::MediaType::Audio);
-			auto timestamp_in_ms = timestamp * _audio_timebase_expr_ms;
-			auto duration_in_ms = duration * _audio_timebase_expr_ms;
+			auto segment = _audio_segment_queue.Append(
+				SegmentDataType::Audio, _audio_sequence_number++,
+				file_name,
+				timestamp, timestamp * _audio_timebase_expr_ms,
+				duration, duration * _audio_timebase_expr_ms,
+				data);
 
-			auto segment = std::make_shared<SegmentItem>(SegmentDataType::Audio, _audio_segment_count++, file_name, timestamp, timestamp_in_ms, duration, duration_in_ms, data);
+			DumpSegmentToFile(segment);
 
-			if (SetSegment(_audio_segment_map, _audio_segment_queue, file_name, segment, _segment_save_count) == SetResult::Failed)
-			{
-				return false;
-			}
-
-			logad("Audio segment is added, file: %s, pts: %" PRId64 "ms, duration: %" PRIu64 "ms, data size: %zubytes", file_name.CStr(), timestamp_in_ms, duration_in_ms, data->GetLength());
 			break;
 		}
 
@@ -871,8 +793,8 @@ bool DashPacketizer::SetSegmentData(Writer &writer, int64_t timestamp)
 	if (IsReadyForStreaming() == false)
 	{
 		if (
-			((_video_track == nullptr) || (_video_segment_count >= _segment_count)) &&
-			((_audio_track == nullptr) || (_audio_segment_count >= _segment_count)))
+			((_video_track == nullptr) || (_video_sequence_number >= _segment_count)) &&
+			((_audio_track == nullptr) || (_audio_sequence_number >= _segment_count)))
 		{
 			SetReadyForStreaming();
 

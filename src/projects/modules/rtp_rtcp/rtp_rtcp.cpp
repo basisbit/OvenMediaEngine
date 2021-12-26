@@ -5,6 +5,9 @@
 #include "publishers/webrtc/rtc_stream.h"
 #include "rtcp_receiver.h"
 #include "rtcp_info/fir.h"
+#include "rtcp_info/pli.h"
+
+#include "modules/rtsp/rtsp_data.h"
 
 #define OV_LOG_TAG "RtpRtcp"
 
@@ -30,7 +33,7 @@ bool RtpRtcp::AddRtpSender(uint8_t payload_type, uint32_t ssrc, uint32_t codec_r
 		return false;
 	}
 
-	_rtcp_sr_generators[payload_type] = std::make_shared<RtcpSRGenerator>(ssrc, codec_rate);
+	_rtcp_sr_generators[ssrc] = std::make_shared<RtcpSRGenerator>(ssrc, codec_rate);
 
 	if(_sdes == nullptr)
 	{
@@ -44,7 +47,7 @@ bool RtpRtcp::AddRtpSender(uint8_t payload_type, uint32_t ssrc, uint32_t codec_r
 	return true;
 }
 
-bool RtpRtcp::AddRtpReceiver(uint8_t payload_type, const std::shared_ptr<MediaTrack> &track)
+bool RtpRtcp::AddRtpReceiver(uint32_t track_id, const std::shared_ptr<MediaTrack> &track)
 {
 	std::shared_lock<std::shared_mutex> lock(_state_lock);
 	if(GetNodeState() != ov::Node::NodeState::Ready)
@@ -53,17 +56,17 @@ bool RtpRtcp::AddRtpReceiver(uint8_t payload_type, const std::shared_ptr<MediaTr
 		return false;
 	}
 
-	_tracks[payload_type] = track;
+	_tracks[track_id] = track;
 
 	switch(track->GetOriginBitstream())
 	{
 		case cmn::BitstreamFormat::H264_RTP_RFC_6184:
 		case cmn::BitstreamFormat::VP8_RTP_RFC_7741:
 		case cmn::BitstreamFormat::AAC_MPEG4_GENERIC:
-			_rtp_frame_jitter_buffers[payload_type] = std::make_shared<RtpFrameJitterBuffer>();
+			_rtp_frame_jitter_buffers[track_id] = std::make_shared<RtpFrameJitterBuffer>();
 			break;
 		case cmn::BitstreamFormat::OPUS_RTP_RFC_7587:
-			_rtp_minimal_jitter_buffers[payload_type] = std::make_shared<RtpMinimalJitterBuffer>();
+			_rtp_minimal_jitter_buffers[track_id] = std::make_shared<RtpMinimalJitterBuffer>();
 			break;
 		default:
 			logte("RTP Receiver cannot support %d input stream format", static_cast<int8_t>(track->GetOriginBitstream()));
@@ -93,7 +96,7 @@ bool RtpRtcp::SendRtpPacket(const std::shared_ptr<RtpPacket> &rtp_packet)
 	}
 
 	// RTCP(SR + SR + SDES + SDES)
-	auto it = _rtcp_sr_generators.find(rtp_packet->PayloadType());
+	auto it = _rtcp_sr_generators.find(rtp_packet->Ssrc());
     if(it != _rtcp_sr_generators.end())
     {
 		auto rtcp_sr_generator = it->second;
@@ -141,7 +144,31 @@ bool RtpRtcp::SendRtpPacket(const std::shared_ptr<RtpPacket> &rtp_packet)
 	return SendDataToNextNode(NodeType::Rtp, rtp_packet->GetData());
 }
 
-bool RtpRtcp::SendFir(uint32_t media_ssrc)
+bool RtpRtcp::SendPLI(uint32_t media_ssrc)
+{
+	auto stat_it = _receive_statistics.find(media_ssrc);
+	if(stat_it == _receive_statistics.end())
+	{
+		// Never received such SSRC packet
+		return false;
+	}
+
+	auto stat = stat_it->second;
+	
+	auto pli = std::make_shared<PLI>();
+
+	pli->SetSrcSsrc(stat->GetReceiverSSRC());
+	pli->SetMediaSsrc(media_ssrc);
+
+	auto rtcp_packet = std::make_shared<RtcpPacket>();
+	rtcp_packet->Build(pli);
+
+	_last_sent_rtcp_packet = rtcp_packet;
+
+	return SendDataToNextNode(NodeType::Rtcp, rtcp_packet->GetData());
+}
+
+bool RtpRtcp::SendFIR(uint32_t media_ssrc)
 {
 	auto stat_it = _receive_statistics.find(media_ssrc);
 	if(stat_it == _receive_statistics.end())
@@ -155,6 +182,7 @@ bool RtpRtcp::SendFir(uint32_t media_ssrc)
 	auto fir = std::make_shared<FIR>();
 
 	fir->SetSrcSsrc(stat->GetReceiverSSRC());
+	fir->SetMediaSsrc(media_ssrc);
 	fir->AddFirMessage(media_ssrc, static_cast<uint8_t>(stat->GetNumberOfFirRequests()%256));
 	auto rtcp_packet = std::make_shared<RtcpPacket>();
 	rtcp_packet->Build(fir);
@@ -222,7 +250,6 @@ bool RtpRtcp::OnDataReceivedFromNextNode(NodeType from_node, const std::shared_p
 		return false;
 	}
 
-
 	/* Check if this is a RTP/RTCP packet
 		https://www.rfc-editor.org/rfc/rfc7983.html
 					+----------------+
@@ -246,12 +273,12 @@ bool RtpRtcp::OnDataReceivedFromNextNode(NodeType from_node, const std::shared_p
 		// RTCP
 		if(payload_type >= 192 && payload_type <= 223)
 		{
-			return OnRtcpReceived(data);
+			return OnRtcpReceived(from_node, data);
 		}
 		// RTP
 		else
 		{
-			return OnRtpReceived(data);
+			return OnRtpReceived(from_node, data);
 		}
 	}
 	else
@@ -263,15 +290,34 @@ bool RtpRtcp::OnDataReceivedFromNextNode(NodeType from_node, const std::shared_p
     return true;
 }
 
-bool RtpRtcp::OnRtpReceived(const std::shared_ptr<const ov::Data> &data)
+bool RtpRtcp::OnRtpReceived(NodeType from_node, const std::shared_ptr<const ov::Data> &data)
 {
 	auto packet = std::make_shared<RtpPacket>(data);
 	logtd("%s", packet->Dump().CStr());
 
-	auto track_it = _tracks.find(packet->PayloadType());
+	uint32_t track_id = 0;
+	if(from_node == NodeType::Rtsp)
+	{
+		auto rtsp_data = std::dynamic_pointer_cast<const RtspData>(data);
+		if(rtsp_data == nullptr)
+		{
+			logte("Could not convert to RtspData");
+			return false;
+		}
+
+		// RTSP Node uses channelID as trackID
+		track_id = rtsp_data->GetChannelId();
+		packet->SetRtspChannel(track_id);
+	}
+	else
+	{
+		track_id = packet->Ssrc();
+	}
+
+	auto track_it = _tracks.find(track_id);
 	if(track_it == _tracks.end())
 	{
-		logte("Could not find track info for payload type %d", packet->PayloadType());
+		logte("Could not find track info for track ID %u", track_id);
 		return false;
 	}
 	auto track = track_it->second;
@@ -295,7 +341,7 @@ bool RtpRtcp::OnRtpReceived(const std::shared_ptr<const ov::Data> &data)
 	if(stat->HasElapsedSinceLastReportBlock(RECEIVER_REPORT_CYCLE_MS))
 	{
 		auto report = std::make_shared<ReceiverReport>();
-		report->SetRtpPayloadType(packet->PayloadType());
+		report->SetRtpSsrc(packet->Ssrc());
 		report->SetSenderSsrc(stat->GetReceiverSSRC());
 		report->AddReportBlock(stat->GenerateReportBlock());
 
@@ -324,7 +370,7 @@ bool RtpRtcp::OnRtpReceived(const std::shared_ptr<const ov::Data> &data)
 
 	if(jitter_buffer_type == 1)
 	{
-		auto buffer_it = _rtp_frame_jitter_buffers.find(packet->PayloadType());
+		auto buffer_it = _rtp_frame_jitter_buffers.find(track_id);
 		if(buffer_it == _rtp_frame_jitter_buffers.end())
 		{
 			// can not happen
@@ -345,10 +391,10 @@ bool RtpRtcp::OnRtpReceived(const std::shared_ptr<const ov::Data> &data)
 			if(packet == nullptr)
 			{
 				// can not happen
-				logte("Could not get first rtp packet from jitter buffer - payload type : %d", packet->PayloadType());
+				logte("Could not get first rtp packet from jitter buffer - ssrc : %u", packet->Ssrc());
 				return false;
 			}
-			
+
 			rtp_packets.push_back(packet);
 
 			while(true)
@@ -367,11 +413,11 @@ bool RtpRtcp::OnRtpReceived(const std::shared_ptr<const ov::Data> &data)
 	}
 	else if(jitter_buffer_type == 2)
 	{
-		auto buffer_it = _rtp_minimal_jitter_buffers.find(packet->PayloadType());
+		auto buffer_it = _rtp_minimal_jitter_buffers.find(track_id);
 		if(buffer_it == _rtp_minimal_jitter_buffers.end())
 		{
 			// can not happen
-			logte("Could not find jitter buffer for payload type %d", packet->PayloadType());
+			logte("Could not find jitter buffer for ssrc %u", packet->Ssrc());
 			return false;
 		}
 
@@ -395,7 +441,7 @@ bool RtpRtcp::OnRtpReceived(const std::shared_ptr<const ov::Data> &data)
 	return true;
 }
 
-bool RtpRtcp::OnRtcpReceived(const std::shared_ptr<const ov::Data> &data)
+bool RtpRtcp::OnRtcpReceived(NodeType from_node, const std::shared_ptr<const ov::Data> &data)
 {
 	logtd("Get RTCP Packet - length(%d)", data->GetLength());
 	// Parse RTCP Packet
@@ -405,9 +451,24 @@ bool RtpRtcp::OnRtcpReceived(const std::shared_ptr<const ov::Data> &data)
 		return false;
 	}
 
+	uint32_t rtsp_channel = 0;
+	if(from_node == NodeType::Rtsp)
+	{
+		auto rtsp_data = std::dynamic_pointer_cast<const RtspData>(data);
+		if(rtsp_data == nullptr)
+		{
+			logte("Could not convert to RtspData");
+			return false;
+		}
+
+		// RTSP Node uses channelID as trackID
+		rtsp_channel = rtsp_data->GetChannelId();
+	}
+
 	while(receiver.HasAvailableRtcpInfo())
 	{
 		auto info = receiver.PopRtcpInfo();
+		info->SetRtspChannel(rtsp_channel);
 
 		if(info->GetPacketType() == RtcpPacketType::SR)
 		{

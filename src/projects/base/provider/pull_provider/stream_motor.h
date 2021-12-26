@@ -14,7 +14,7 @@
 #include "base/common_types.h"
 #include "base/ovlibrary/ovlibrary.h"
 
-#include "base/mediarouter/media_route_application_connector.h"
+#include "base/mediarouter/mediarouter_application_connector.h"
 #include "stream.h"
 
 #include <shared_mutex>
@@ -35,6 +35,7 @@ namespace pvd
 		bool Stop();
 
 		bool AddStream(const std::shared_ptr<PullStream> &stream);
+		bool UpdateStream(const std::shared_ptr<PullStream> &stream);
 		bool DelStream(const std::shared_ptr<PullStream> &stream);
 
 	private:

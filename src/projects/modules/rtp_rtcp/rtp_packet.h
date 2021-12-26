@@ -3,13 +3,14 @@
 #include <vector>
 #include <memory>
 #include <base/ovlibrary/ovlibrary.h>
+#include "rtp_header_extension/rtp_header_extensions.h"
 
 #define RTP_VERSION					2
 #define FIXED_HEADER_SIZE			12
 #define RED_HEADER_SIZE				1
+#define EXTENSION_HEADER_SIZE		4
 #define ONE_BYTE_EXTENSION_ID		0xBEDE
-#define ONE_BYTE_HEADER_SIZE		1
-#define RTP_DEFAULT_MAX_PACKET_SIZE		1472
+#define RTP_DEFAULT_MAX_PACKET_SIZE	1472
 
 //  0                   1                   2                   3
 //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -55,6 +56,8 @@ public:
 	uint32_t	Timestamp() const;
 	uint32_t	Ssrc() const;
 	std::vector<uint32_t> Csrcs() const;
+	std::map<uint8_t, ov::Data> Extensions() const;
+	std::optional<ov::Data>	GetExtension(uint8_t id) const;
 	uint8_t*	Buffer() const;
 
 	// Setter
@@ -68,6 +71,7 @@ public:
 	
 	// must call before setting extentions, payload, padding
 	void		SetCsrcs(const std::vector<uint32_t>& csrcs);
+	void		SetExtensions(const RtpHeaderExtensions& extensions);
 
 	size_t		HeadersSize() const;
 	size_t		PayloadSize() const;
@@ -103,6 +107,9 @@ public:
 	void		SetFirstPacketOfFrame(bool flag) {_is_first_packet_of_frame = flag;}
 	bool		IsFirstPacketOfFrame() const {return _is_first_packet_of_frame;}
 
+	void		SetRtspChannel(uint32_t rtsp_channel) {_rtsp_channel = rtsp_channel;}
+	uint32_t	GetRtspChannel() const {return _rtsp_channel;}
+
 protected:
 	size_t		_payload_offset = 0;	// Payload Start Point (Header size)
 	bool		_has_padding = false;
@@ -118,6 +125,7 @@ protected:
 	uint32_t	_ssrc = 0;
 	size_t		_payload_size = 0;		// Payload Size
 	size_t		_extension_size;
+	std::map<uint8_t, ov::Data> _extensions;
 
 	bool		_is_available = false;
 
@@ -133,5 +141,7 @@ protected:
 	bool		_is_video_packet = false;
 	bool		_is_keyframe = false;
 	bool		_is_first_packet_of_frame = false;
+
+	uint32_t	_rtsp_channel = 0; // If it is from RTSP, _rtsp_channel is valid
 };
 

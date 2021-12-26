@@ -129,7 +129,14 @@ void DecoderOPUS::ThreadDecode()
 					_pkt->pts = _parser->pts;
 					_pkt->dts = _parser->dts;
 					_pkt->flags = (_parser->key_frame == 1) ? AV_PKT_FLAG_KEY : 0;
-					_pkt->duration = _pkt->dts - _parser->last_dts;
+					if (_pkt->pts != AV_NOPTS_VALUE && _parser->last_pts != AV_NOPTS_VALUE)
+					{
+						_pkt->duration = _pkt->pts - _parser->last_pts;
+					}
+					else
+					{
+						_pkt->duration = 0;
+					}
 
 					int ret = ::avcodec_send_packet(_context, _pkt);
 
@@ -226,8 +233,6 @@ void DecoderOPUS::ThreadDecode()
 					logte("Could not obtain codec paramters from context %p", _context);
 				}
 			}
-
-			_decoded_frame_num++;
 
 			// TODO(soulk) : Reduce memory copy overhead. Memory copy can be removed in the Decoder -> Filter step.
 			auto output_frame = TranscoderUtilities::ConvertToMediaFrame(cmn::MediaType::Audio, _frame);

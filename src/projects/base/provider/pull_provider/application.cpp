@@ -52,6 +52,9 @@ namespace pvd
 	// It works only with pull provider
 	void PullApplication::WhiteElephantStreamCollector()
 	{
+		auto no_input_timeout = GetHostInfo().GetOrigins().GetProperties().GetNoInputFailoverTimeout();
+		auto unused_stream_timeout = GetHostInfo().GetOrigins().GetProperties().GetUnusedStreamDeletionTimeout();
+
 		while(!_stop_collector_thread_flag)
 		{
 			// TODO (Getroot): If there is no stream, use semaphore to wait until the stream is added.
@@ -67,30 +70,37 @@ namespace pvd
 			
 				if(stream->GetState() == Stream::State::STOPPED || stream->GetState() == Stream::State::ERROR)
 				{
+					// Retry
+					ResumeStream(stream);
+				}
+				else if(stream->GetState() == Stream::State::TERMINATED)
+				{
+					// Tried several times, but if unsuccessful, delete it completely.
 					DeleteStream(stream);
 				}
-				else if(stream->GetState() != Stream::State::STOPPING)
+				else
 				{
 					// Check if there are streams have no any viewers
 					auto stream_metrics = StreamMetrics(*std::static_pointer_cast<info::Stream>(stream));
 					if(stream_metrics != nullptr)
 					{
 						auto current = std::chrono::high_resolution_clock::now();
-						auto elapsed_time_from_last_sent = std::chrono::duration_cast<std::chrono::seconds>(current - stream_metrics->GetLastSentTime()).count();
-						auto elapsed_time_from_last_recv = std::chrono::duration_cast<std::chrono::seconds>(current - stream_metrics->GetLastRecvTime()).count();
-
-						// Abort pull stream when no packets arrived for more than 5 seconds. Most likely the stream source died, thus give OME a chance to correctly create a new stream + playlistis
-						if(elapsed_time_from_last_recv > 5)
+						auto elapsed_time_from_last_sent = std::chrono::duration_cast<std::chrono::milliseconds>(current - stream_metrics->GetLastSentTime()).count();
+						auto elapsed_time_from_last_recv = std::chrono::duration_cast<std::chrono::milliseconds>(current - stream_metrics->GetLastRecvTime()).count();
+						
+						if(elapsed_time_from_last_sent > unused_stream_timeout)
 						{
-							logtw("%s/%s(%u) There were no incoming packets. %d seconds have elapsed since the last packet was received. Deleting the stream.", 
-									stream->GetApplicationInfo().GetName().CStr(), stream->GetName().CStr(), stream->GetId(), elapsed_time_from_last_recv);
+							logtw("%s/%s(%u) stream will be deleted because it hasn't been used for %u milliseconds", stream->GetApplicationInfo().GetName().CStr(), stream->GetName().CStr(), stream->GetId(), elapsed_time_from_last_sent);
 							DeleteStream(stream);
 						}
-
-						if(elapsed_time_from_last_sent > MAX_UNUSED_STREAM_AVAILABLE_TIME_SEC)
+						// The stream type is pull stream, if packets do NOT arrive for more than 3 seconds, it is a seriously warning situation
+						else if(elapsed_time_from_last_recv > no_input_timeout)
 						{
-							logtw("%s/%s(%u) stream will be deleted because it hasn't been used for %u seconds", stream->GetApplicationInfo().GetName().CStr(), stream->GetName().CStr(), stream->GetId(), MAX_UNUSED_STREAM_AVAILABLE_TIME_SEC);
-							DeleteStream(stream);
+							logtw("Stop stream %s/%s(%u) : there are no incoming packets. %d milliseconds have elapsed since the last packet was received.", 
+									stream->GetApplicationInfo().GetName().CStr(), stream->GetName().CStr(), stream->GetId(), elapsed_time_from_last_recv);
+
+							// When the stream is stopped, it tries to reconnect using the next url.
+							stream->Stop();
 						}
 					}
 				}
@@ -203,6 +213,37 @@ namespace pvd
 		motor->AddStream(stream);
 		
 		return stream;
+	}
+
+	bool PullApplication::ResumeStream(const std::shared_ptr<Stream> &stream)
+	{
+		auto pull_stream = std::dynamic_pointer_cast<PullStream>(stream);
+		if(pull_stream == nullptr)
+		{
+			return false;
+		}
+
+		if(pull_stream->Resume() == false)
+		{
+			return false;
+		}
+
+		auto motor = GetStreamMotorInternal(pull_stream);
+		if(motor == nullptr)
+		{
+			// Something wrong
+			return false;
+		}
+
+		pull_stream->SetMsid(pull_stream->GetMsid() + 1);
+		NotifyStreamUpdated(pull_stream);
+
+		if(motor->UpdateStream(pull_stream) == false)
+		{
+			return false;
+		}
+
+		return true;
 	}
 
 	bool PullApplication::DeleteStream(const std::shared_ptr<Stream> &stream)

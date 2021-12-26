@@ -8,43 +8,26 @@
 //==============================================================================
 #include "tls_server_data.h"
 
-#define OV_LOG_TAG "TLS"
+#include "./openssl_private.h"
 
 namespace ov
 {
-	TlsServerData::TlsServerData(Method method, const std::shared_ptr<Certificate> &certificate, const std::shared_ptr<Certificate> &chain_certificate, const String &cipher_list)
+	TlsServerData::TlsServerData(const std::shared_ptr<TlsContext> &tls_context, bool is_nonblocking)
 	{
-		TlsCallback callback =
-			{
-				.create_callback = [](Tls *tls, SSL_CTX *context) -> bool {
-					return true;
-				},
+		TlsBioCallback callback = {
+			.read_callback = std::bind(&TlsServerData::OnTlsRead, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
+			.write_callback = std::bind(&TlsServerData::OnTlsWrite, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
+			.destroy_callback = nullptr,
+			.ctrl_callback = std::bind(&TlsServerData::OnTlsCtrl, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)};
 
-				.read_callback = std::bind(&TlsServerData::OnTlsRead, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
-				.write_callback = std::bind(&TlsServerData::OnTlsWrite, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
-				.destroy_callback = nullptr,
-				.ctrl_callback = std::bind(&TlsServerData::OnTlsCtrl, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4),
-				.verify_callback = nullptr};
-
-		const SSL_METHOD *tls_method = nullptr;
 		std::shared_ptr<Error> error;
-
-		switch (method)
-		{
-			case Method::Tls:
-				tls_method = TLS_server_method();
-				break;
-
-			case Method::Dtls:
-				tls_method = DTLS_server_method();
-				break;
-		}
 
 		if (error == nullptr)
 		{
-			if (_tls.InitializeServerTls(tls_method, certificate, chain_certificate, cipher_list, callback))
+			bool result = _tls.Initialize(tls_context, callback, is_nonblocking);
+
+			if (result)
 			{
-				_method = method;
 				_state = State::WaitingForAccept;
 			}
 			else
@@ -75,62 +58,97 @@ namespace ov
 
 		logtd("Trying to decrypt the data for TLS\n%s", cipher_data->Dump(32).CStr());
 
-		if ((_cipher_data == nullptr) || _cipher_data->IsEmpty())
 		{
-			_cipher_data = cipher_data->Clone();
-		}
-		else
-		{
-			// Append the data
-			if (_cipher_data->Append(cipher_data) == false)
+			std::lock_guard lock_guard(_cipher_data_mutex);
+			if ((_cipher_data == nullptr) || _cipher_data->IsEmpty())
 			{
-				logtd("Could not append data");
-				return false;
+				_cipher_data = cipher_data->Clone();
+			}
+			else
+			{
+				// Append the data
+				if (_cipher_data->Append(cipher_data) == false)
+				{
+					logtd("Could not append data");
+					return false;
+				}
 			}
 		}
 
-		switch (_state)
+		volatile bool stop = false;
+		std::shared_ptr<Data> decrypted;
+
+		while (stop == false)
 		{
-			case State::Invalid:
-				OV_ASSERT2(false);
-				return false;
+			switch (_state)
+			{
+				case State::Invalid:
+					OV_ASSERT2(false);
+					return false;
 
-			case State::WaitingForAccept: {
-				logtd("Trying to accept TLS...");
+				case State::WaitingForAccept: {
+					logtd("Trying to accept TLS...");
 
-				int result = _tls.Accept();
+					int result = _tls.Accept();
 
-				switch (result)
-				{
-					case SSL_ERROR_NONE:
-						logtd("Accepted");
-						_state = State::Accepted;
-						break;
+					switch (result)
+					{
+						case SSL_ERROR_NONE: {
+							logtd("Accepted");
+							_state = State::Accepted;
+							break;
+						}
 
-					case SSL_ERROR_WANT_READ:
-						logtd("Need more data to accept the request");
-						break;
+						case SSL_ERROR_WANT_READ:
+							logtd("Need more data to accept the request");
+							stop = true;
+							break;
 
-					default:
-						logte("An error occurred while accept TLS connection");
-						return false;
+						default:
+							logte("An error occurred while accept TLS connection: error code: %d", result);
+							return false;
+					}
+
+					break;
 				}
 
-				break;
+				case State::Accepted: {
+					logtd("Trying to read data from TLS module...");
+
+					auto read_data = _tls.Read();
+
+					if (read_data == nullptr)
+					{
+						logte("An error occurred while read TLS data");
+						return false;
+					}
+
+					if (read_data->IsEmpty())
+					{
+						stop = true;
+					}
+					else
+					{
+						logtd("Decrypted data\n%s", read_data->Dump().CStr());
+
+						if (decrypted != nullptr)
+						{
+							decrypted->Append(read_data);
+						}
+						else
+						{
+							decrypted = read_data;
+						}
+					}
+
+					break;
+				}
 			}
+		}
 
-			case State::Accepted: {
-				logtd("Trying to read data from TLS module...");
-
-				// Tls::Read() -> SSL_read() -> Tls::TlsRead() -> BIO_get_data()::read_callback -> TlsServerData::OnTlsRead()
-				auto decrypted = _tls.Read();
-
-				logtd("Decrypted data\n%s", decrypted->Dump().CStr());
-
-				*plain_data = decrypted;
-
-				break;
-			}
+		if (plain_data != nullptr)
+		{
+			*plain_data = decrypted;
 		}
 
 		return true;
@@ -149,9 +167,9 @@ namespace ov
 
 		size_t written_bytes = 0;
 
-		// Tls::Write() -> SSL_write() -> Tls::TlsWrite() -> BIO_get_data()::write_callback -> TlsServerData::OnTlsWrite()
 		if (_tls.Write(plain_data, &written_bytes) == SSL_ERROR_NONE)
 		{
+			std::lock_guard lock_guard(_plain_data_mutex);
 			*cipher_data = std::move(_plain_data);
 			return true;
 		}
@@ -161,6 +179,8 @@ namespace ov
 
 	ssize_t TlsServerData::OnTlsRead(Tls *tls, void *buffer, size_t length)
 	{
+		std::lock_guard lock_guard(_cipher_data_mutex);
+
 		if (_cipher_data == nullptr)
 		{
 			return 0;
@@ -168,7 +188,7 @@ namespace ov
 
 		auto bytes_to_copy = std::min(length, _cipher_data->GetLength());
 
-		logtd("Trying to read %zu bytes from TLS data buffer...", bytes_to_copy);
+		logtd("Trying to read %zu bytes from TLS data buffer (length: %zu, data: %zu)...", bytes_to_copy, length, _cipher_data->GetLength());
 
 		::memcpy(buffer, _cipher_data->GetData(), bytes_to_copy);
 		_cipher_data = (_cipher_data->GetLength() == bytes_to_copy) ? nullptr : _cipher_data->Subdata(bytes_to_copy);
@@ -192,6 +212,7 @@ namespace ov
 		}
 		else
 		{
+			std::lock_guard lock_guard(_plain_data_mutex);
 			if (_plain_data == nullptr)
 			{
 				_plain_data = std::make_shared<Data>(data, length);

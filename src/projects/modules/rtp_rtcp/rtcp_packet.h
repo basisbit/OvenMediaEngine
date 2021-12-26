@@ -24,15 +24,11 @@ public:
 
 	virtual void DebugPrint() = 0;
 
-	void SetRtpPayloadType(uint8_t payload_type)
-	{
-		_rtp_payload_type = payload_type;
-	}
-
-	uint8_t GetRtpPayloadType() const
-	{
-		return _rtp_payload_type;
-	}
+	// Extra Information
+	void SetRtpSsrc(uint32_t ssrc){_rtp_ssrc = ssrc;}
+	uint8_t GetRtpSsrc() const {return _rtp_ssrc;}
+	void SetRtspChannel(uint32_t rtsp_channel) {_rtsp_channel = rtsp_channel;}
+	uint32_t GetRtspChannel() const {return _rtsp_channel;}
 
 protected:
 	void SetCount(uint8_t count) {_count_or_fmt = count;}
@@ -43,7 +39,9 @@ private:
 
 	// Extra Infomation
 	// it is not used for RTCP packet, but in order to find RTP stream faster
-	uint8_t		_rtp_payload_type = 0;
+	uint32_t	_rtp_ssrc = 0;
+	// If it is from RTSP, rtsp_channel value is valid
+	uint32_t	_rtsp_channel = 0;
 };
 
 #define RTCP_DEFAULT_MAX_PACKET_SIZE	1472

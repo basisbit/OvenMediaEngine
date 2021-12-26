@@ -18,8 +18,10 @@
 #include <orchestrator/orchestrator.h>
 #include <providers/providers.h>
 #include <publishers/publishers.h>
+#include <sys/utsname.h>
 #include <transcoder/transcoder.h>
 #include <web_console/web_console.h>
+#include <modules/sdp/sdp_regex_pattern.h>
 
 #include "banner.h"
 #include "init_utilities.h"
@@ -31,6 +33,7 @@
 extern bool g_is_terminated;
 
 static ov::Daemon::State Initialize(int argc, char *argv[], ParseOption *parse_option);
+static void CheckKernelVersion();
 static bool Uninitialize();
 
 int main(int argc, char *argv[])
@@ -45,7 +48,6 @@ int main(int argc, char *argv[])
 				return 0;
 
 			case ov::Daemon::State::CHILD_SUCCESS:
-				// continue;
 				break;
 
 			case ov::Daemon::State::PIPE_FAIL:
@@ -61,11 +63,11 @@ int main(int argc, char *argv[])
 	}
 
 	PrintBanner();
+	CheckKernelVersion();
 
 	auto server_config = cfg::ConfigManager::GetInstance()->GetServer();
 	auto orchestrator = ocst::Orchestrator::GetInstance();
-	auto monitor = mon::Monitoring::GetInstance();
-	monitor->OnServerStarted(server_config);
+
 	logti("Server ID : %s", server_config->GetID().CStr());
 
 	// Get public IP
@@ -83,34 +85,14 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	// Create info::Host list
-	std::vector<info::Host> host_info_list;
+	// Precompile SDP patterns for better performance.
+	if(SDPRegexPattern::GetInstance()->Compile() == false)
 	{
-		// Used to check duplicate names
-		std::map<ov::String, bool> vhost_map;
-		auto &hosts = server_config->GetVirtualHostList();
-
-		for (const auto &host : hosts)
-		{
-			auto item = vhost_map.find(host.GetName());
-
-			if (item == vhost_map.end())
-			{
-				host_info_list.emplace_back(info::Host(server_config->GetName(), server_config->GetID(), host));
-				vhost_map[host.GetName()] = true;
-			}
-			else
-			{
-				logte("Duplicated VirtualHost found: %s", host.GetName().CStr());
-				return 1;
-			}
-		}
+		OV_ASSERT(false, "SDPRegexPattern compile failed");
+		return false;
 	}
 
-	orchestrator->ApplyOriginMap(host_info_list);
-
 	auto api_server = api::Server::GetInstance();
-
 	api_server->Start(server_config);
 
 	INIT_EXTERNAL_MODULE("FFmpeg", InitializeFFmpeg);
@@ -152,56 +134,7 @@ int main(int argc, char *argv[])
 
 	logti("All modules are initialized successfully");
 
-	bool should_exit = false;
-
-	for (auto &host_info : host_info_list)
-	{
-		auto host_name = host_info.GetName();
-
-		logtd("Trying to create host [%s]", host_name.CStr());
-		monitor->OnHostCreated(host_info);
-
-		// Create applications that defined by the configuration
-		for (auto &app_cfg : host_info.GetApplicationList())
-		{
-			auto result = orchestrator->CreateApplication(host_info, app_cfg);
-
-			switch (result)
-			{
-				case ocst::Result::Failed:
-					logtc("Failed to create an application: %s", app_cfg.GetName().CStr());
-					should_exit = true;
-					break;
-
-				case ocst::Result::Succeeded:
-					break;
-
-				case ocst::Result::Exists:
-					logtc("Duplicate application [%s] found. Please check the settings.", app_cfg.GetName().CStr());
-					should_exit = true;
-					break;
-
-				case ocst::Result::NotExists:
-					// This should never happen
-					OV_ASSERT2(false);
-					logtc("Internal error occurred (THIS IS A BUG)");
-					should_exit = true;
-					break;
-			}
-
-			if (should_exit)
-			{
-				break;
-			}
-		}
-
-		if (should_exit)
-		{
-			break;
-		}
-	}
-
-	if (should_exit == false)
+	if(orchestrator->StartServer(server_config))
 	{
 		if (parse_option.start_service)
 		{
@@ -215,8 +148,6 @@ int main(int argc, char *argv[])
 	}
 
 	orchestrator->Release();
-	// Relase all modules
-	monitor->Release();
 	api_server->Stop();
 
 	RELEASE_MODULE(webrtc_provider, "WebRTC Provider");
@@ -277,7 +208,8 @@ static ov::Daemon::State Initialize(int argc, char *argv[], ParseOption *parse_o
 	// Daemonize OME with start_service argument
 	if (parse_option->start_service)
 	{
-		auto state = ov::Daemon::Initialize();
+		auto &p { parse_option->pid_path };
+		auto state { p.IsEmpty() ? ov::Daemon::Initialize() : ov::Daemon::Initialize(p.CStr()) };
 
 		switch (state)
 		{
@@ -327,6 +259,37 @@ static ov::Daemon::State Initialize(int argc, char *argv[], ParseOption *parse_o
 	}
 
 	return ov::Daemon::State::CHILD_FAIL;
+}
+
+static void CheckKernelVersion()
+{
+	utsname name{};
+
+	if (::uname(&name) != 0)
+	{
+		logte("Could not obtain utsname using uname(): %s", ov::Error::CreateErrorFromErrno()->ToString().CStr());
+		return;
+	}
+
+	ov::String release = name.release;
+	auto tokens = release.Split(".");
+
+	if (tokens.size() > 1)
+	{
+		auto major = ov::Converter::ToInt32(tokens[0]);
+		auto minor = ov::Converter::ToInt32(tokens[1]);
+
+		if ((major == 5) &&
+			((minor >= 3) && (minor <= 6)))
+		{
+			logtc("Current kernel version: %s", release.CStr());
+			logtc("Linux kernel version 5.3 through 5.6 have a critical bug. Please consider using a different version. (https://bugzilla.kernel.org/show_bug.cgi?id=205933)");
+		}
+	}
+	else
+	{
+		logte("Could not parse kernel version: %s", release.CStr());
+	}
 }
 
 static bool Uninitialize()

@@ -391,7 +391,7 @@ void IcePort::CheckTimedoutItem()
 	// Notify to observer
 	for (auto &deleted_ice_port : delete_list)
 	{
-		logtw("Client %s(session id: %d) has expired", deleted_ice_port->address.ToString().CStr(), deleted_ice_port->session_id);
+		logtw("Client %s(session id: %d) has expired", deleted_ice_port->address.ToString(false).CStr(), deleted_ice_port->session_id);
 
 		// Close only TCP (TURN)
 		if(deleted_ice_port->remote != nullptr && deleted_ice_port->remote->GetSocket().GetType() == ov::SocketType::Tcp)
@@ -568,7 +568,7 @@ void IcePort::OnApplicationPacketReceived(const std::shared_ptr<ov::Socket> &rem
 
 	if (ice_port_info == nullptr)
 	{
-		logtd("Could not find client information. Dropping...");
+		logtw("Could not find client(%s) information. Dropping...", address.ToString(false).CStr());
 		return;
 	}
 	
@@ -714,7 +714,7 @@ bool IcePort::ProcessStunBindingRequest(const std::shared_ptr<ov::Socket> &remot
 		return false;
 	}
 
-	logtd("[From %s To %s] Received STUN binding request: %s:%s", address.ToString().CStr(), remote->GetLocalAddress()->ToString().CStr(), local_ufrag.CStr(), remote_ufrag.CStr());
+	logtd("[From %s To %s] Received STUN binding request: %s:%s", address.ToString(false).CStr(), remote->GetLocalAddress()->ToString().CStr(), local_ufrag.CStr(), remote_ufrag.CStr());
 
 	
 	std::shared_ptr<IcePortInfo> ice_port_info;
@@ -766,11 +766,11 @@ bool IcePort::ProcessStunBindingRequest(const std::shared_ptr<ov::Socket> &remot
 
 		if(ice_port_info->state == IcePortConnectionState::New)
 		{
-			logti("Add the client to the port list: %s", address.ToString().CStr());
+			logti("Add the client to the port list: %s / %s", address.ToString(false).CStr(), gate_info.ToString().CStr());
 		}
 		else
 		{
-			logti("Update the client to the port list: to %s from %s", address.ToString().CStr(), ice_port_info->address.ToString().CStr());
+			logti("Update the client to the port list: to %s from %s", address.ToString(false).CStr(), ice_port_info->address.ToString(false).CStr());
 		}
 
 		ice_port_info->remote = remote;
@@ -807,7 +807,7 @@ bool IcePort::ProcessStunBindingRequest(const std::shared_ptr<ov::Socket> &remot
 
 		// Send Stun Binding Response
 		// TODO: apply SASLprep(password)
-		SendStunMessage(remote, address, gate_info, response_message, ice_port_info->offer_sdp->GetIcePwd());
+		SendStunMessage(remote, address, gate_info, response_message, ice_port_info->offer_sdp->GetIcePwd().ToData(false));
 
 		// Immediately, the server also sends a bind request.
 		SendStunBindingRequest(remote, address, gate_info, ice_port_info);
@@ -871,7 +871,7 @@ bool IcePort::SendStunBindingRequest(const std::shared_ptr<ov::Socket> &remote, 
 	unknown_attribute->SetData(&(unknown_data3[0]), 4);
 	message.AddAttribute(std::move(attribute));
 
-	logtd("Send Stun Binding Request : %s", address.ToString().CStr());
+	logtd("Send Stun Binding Request : %s", address.ToString(false).CStr());
 
 	// Store binding request transction
 	{
@@ -880,11 +880,11 @@ bool IcePort::SendStunBindingRequest(const std::shared_ptr<ov::Socket> &remote, 
 		ov::String transaction_id_key((char*)(&transaction_id[0]), OV_STUN_TRANSACTION_ID_LENGTH);
 		_binding_request_table.emplace(transaction_id_key, BindingRequestInfo(transaction_id_key, info));
 
-		logtd("Send Binding Request to(%s) id(%s)", address.ToString().CStr(), transaction_id_key.CStr());
+		logtd("Send Binding Request to(%s) id(%s)", address.ToString(false).CStr(), transaction_id_key.CStr());
 	}
 
 	// TODO: apply SASLprep(password)
-	SendStunMessage(remote, address, gate_info, message, info->peer_sdp->GetIcePwd());
+	SendStunMessage(remote, address, gate_info, message, info->peer_sdp->GetIcePwd().ToData(false));
 
 	return true;
 }
@@ -901,7 +901,7 @@ bool IcePort::ProcessStunBindingResponse(const std::shared_ptr<ov::Socket> &remo
 		auto item = _binding_request_table.find(transaction_id_key);
 		if(item == _binding_request_table.end())
 		{
-			logtw("Could not find binding request info : transaction id(%s)", transaction_id_key.CStr());
+			logtw("Could not find binding request info : address(%s) transaction id(%s)", address.ToString(false).CStr(), transaction_id_key.CStr());
 			return false;
 		}
 
@@ -910,7 +910,7 @@ bool IcePort::ProcessStunBindingResponse(const std::shared_ptr<ov::Socket> &remo
 		// Erase ended transction item
 		_binding_request_table.erase(item);
 
-		logtd("Receive stun binding response from %s, table size(%d)", address.ToString().CStr(), _binding_request_table.size());
+		logtd("Receive stun binding response from %s, table size(%d)", address.ToString(false).CStr(), _binding_request_table.size());
 	}
 
 	if (message.CheckIntegrity(ice_port_info->offer_sdp->GetIcePwd()) == false)
@@ -919,22 +919,22 @@ bool IcePort::ProcessStunBindingResponse(const std::shared_ptr<ov::Socket> &remo
 		return false;
 	}
 
-	logtd("Client %s sent STUN binding response", address.ToString().CStr());
+	logtd("Client %s sent STUN binding response", address.ToString(false).CStr());
 
 	return true;
 }
 
-bool IcePort::SendStunMessage(const std::shared_ptr<ov::Socket> &remote, const ov::SocketAddress &address, GateInfo &gate_info,  StunMessage &message, const ov::String &integity_key)
+bool IcePort::SendStunMessage(const std::shared_ptr<ov::Socket> &remote, const ov::SocketAddress &address, GateInfo &gate_info,  StunMessage &message, const std::shared_ptr<const ov::Data> &integrity_key)
 {
 	std::shared_ptr<const ov::Data> source_data, send_data;
 
-	if(integity_key.IsEmpty())
+	if(integrity_key == nullptr)
 	{
 		source_data = message.Serialize();
 	}
 	else
 	{
-		source_data = message.Serialize(integity_key);
+		source_data = message.Serialize(integrity_key);
 	}
 	
 	logtd("Send message:\n%s", message.ToString().CStr());
@@ -1054,7 +1054,7 @@ bool IcePort::ProcessTurnAllocateRequest(const std::shared_ptr<ov::Socket> &remo
 	response_message.AddAttribute(_xor_relayed_address_attribute);
 	response_message.AddAttribute(_software_attribute);
 	
-	SendStunMessage(remote, address, gate_info, response_message, _hmac_key->ToString());
+	SendStunMessage(remote, address, gate_info, response_message, _hmac_key);
 
 	return true;
 }
@@ -1103,7 +1103,7 @@ bool IcePort::ProcessTurnCreatePermissionRequest(const std::shared_ptr<ov::Socke
 
 	StunMessage response_message;
 	response_message.SetHeader(StunClass::SuccessResponse, StunMethod::CreatePermission, message.GetTransactionId());
-	SendStunMessage(remote, address, gate_info, response_message, _hmac_key->ToString());
+	SendStunMessage(remote, address, gate_info, response_message, _hmac_key);
 
 	return true;
 }
@@ -1122,7 +1122,7 @@ bool IcePort::ProcessTurnChannelBindRequest(const std::shared_ptr<ov::Socket> &r
 	}
 
 	response_message.SetHeader(StunClass::SuccessResponse, StunMethod::ChannelBind, message.GetTransactionId());
-	SendStunMessage(remote, address, gate_info, response_message, _hmac_key->ToString());
+	SendStunMessage(remote, address, gate_info, response_message, _hmac_key);
 
 	std::shared_ptr<IcePortInfo> ice_port_info;
 	{
@@ -1159,7 +1159,7 @@ bool IcePort::ProcessTurnRefreshRequest(const std::shared_ptr<ov::Socket> &remot
 
 	response_message.SetHeader(StunClass::SuccessResponse, StunMethod::Refresh, message.GetTransactionId());
 	response_message.AddAttribute(lifetime_attribute);
-	SendStunMessage(remote, address, gate_info, response_message, _hmac_key->ToString());
+	SendStunMessage(remote, address, gate_info, response_message, _hmac_key);
 
 	logtd("Turn Refresh Request : %s", lifetime_attribute->ToString().CStr());	
 

@@ -50,12 +50,12 @@ public:
 
 	bool Start();
 	bool Stop();
-
+	bool Prepare();
+	bool Update(const std::shared_ptr<info::Stream> &stream);
+	
 	bool Push(std::shared_ptr<MediaPacket> packet);
 
 private:
-	// ov::Semaphore _queue_event;
-
 	const info::Application _application_info;
 
 	// Input Stream Info
@@ -80,16 +80,16 @@ private:
 	std::map<MediaTrackId, MediaTrackId> _stage_input_to_decoder;
 
 	// [INPUT_TRACK, Output Stream + Track Id]
-	std::map<MediaTrackId, std::vector<std::pair<std::shared_ptr<info::Stream>, MediaTrackId>>> _stage_input_to_output;
+	std::map<MediaTrackId, std::vector<std::pair<std::shared_ptr<info::Stream>, MediaTrackId>>> _stage_input_to_outputs;
 
 	// [DECODER_ID, FILTER_ID(trasncode_id)]
-	std::map<MediaTrackId, std::vector<MediaTrackId>> _stage_decoder_to_filter;
+	std::map<MediaTrackId, std::vector<MediaTrackId>> _stage_decoder_to_filters;
 
 	// [FILTER_ID(trasncode_id), ENCODER_ID(trasncode_id)]
 	std::map<MediaTrackId, MediaTrackId> _stage_filter_to_encoder;
 
 	// [ENCODER_ID(trasncode_id), OUTPUT_TRACKS]
-	std::map<MediaTrackId, std::vector<std::pair<std::shared_ptr<info::Stream>, MediaTrackId>>> _stage_encoder_to_output;
+	std::map<MediaTrackId, std::vector<std::pair<std::shared_ptr<info::Stream>, MediaTrackId>>> _stage_encoder_to_outputs;
 
 	// Decoder
 	// DECODR_ID, DECODER
@@ -105,8 +105,6 @@ private:
 
 	// last generated output track id.
 	uint8_t _last_track_index = 0;
-
-	volatile bool _kill_flag;
 
 	TranscodeApplication *GetParent();
 	TranscodeApplication *_parent;
@@ -148,14 +146,17 @@ private:
 	TranscodeResult FilterFrame(int32_t track_id, std::shared_ptr<MediaFrame> frame);
 
 	// Step 3: Encode (Encode the filtered frame to packets)
-	TranscodeResult EncodeFrame(int32_t track_id, std::shared_ptr<const MediaFrame> frame);
+	TranscodeResult EncodeFrame(std::shared_ptr<const MediaFrame> frame);
 	TranscodeResult OnEncodedPacket(int32_t encoder_id);
 
 	// Send frame with output stream's information
 	void SendFrame(std::shared_ptr<info::Stream> &stream, std::shared_ptr<MediaPacket> packet);
 
+	void RemoveAllComponents();
+
+	void UpdateMsidOfOutputStreams(uint32_t msid);
 public:
-	cmn::MediaCodecId GetCodecId(ov::String name);
+	cmn::MediaCodecId GetCodecIdByName(ov::String name);
 
 	bool IsVideoCodec(cmn::MediaCodecId codec_id);
 	bool IsAudioCodec(cmn::MediaCodecId codec_id);
@@ -166,9 +167,8 @@ public:
 
 	const cmn::Timebase GetDefaultTimebaseByCodecId(cmn::MediaCodecId codec_id);
 
-	// Create output streams
+	// Notify event to mediarouter
 	void NotifyCreateStreams();
-
-	// Delete output streams
 	void NotifyDeleteStreams();
+	void NotifyUpdateStreams();
 };

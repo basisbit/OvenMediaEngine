@@ -18,14 +18,6 @@ namespace ov
 	public:
 		using WriteCallback = std::function<ssize_t(const void *data, int64_t length)>;
 
-		enum class Method
-		{
-			// TLS_server_method()
-			Tls,
-			// DTLS_server_method()
-			Dtls,
-		};
-
 		enum class State
 		{
 			Invalid,
@@ -34,7 +26,7 @@ namespace ov
 			Accepted,
 		};
 
-		TlsServerData(Method method, const std::shared_ptr<Certificate> &certificate, const std::shared_ptr<Certificate> &chain_certificate, const String &cipher_list);
+		TlsServerData(const std::shared_ptr<TlsContext> &tls_context, bool is_blocking);
 
 		~TlsServerData();
 
@@ -54,6 +46,22 @@ namespace ov
 			_write_callback = write_callback;
 		}
 
+		// If a server name is provided by SNI, it should be stored in ov::TlsServerData, which is the method used at this time.
+		void SetServerName(const char *server_name)
+		{
+			_server_name = server_name;
+		}
+
+		ov::String GetServerName() const
+		{
+			return _server_name;
+		}
+
+		const Tls &GetTls() const
+		{
+			return _tls;
+		}
+
 		// plain_data can be null even if successful (It indicates accepting a new client)
 		bool Decrypt(const std::shared_ptr<const Data> &cipher_data, std::shared_ptr<const Data> *plain_data);
 		// cipher_data can be null even if successful (It indicates accepting a new client)
@@ -66,21 +74,25 @@ namespace ov
 		//--------------------------------------------------------------------
 		// Called by TLS module
 		//--------------------------------------------------------------------
-		// Tls::Read() -> SSL_read() -> Tls::TlsRead() -> BIO_get_data()::read_callback -> TlsServerData::OnTlsRead()
+		// Tls.Read() -> SSL_read() -> Tls::TlsRead() -> TlsBioCallback.read_callback -> TlsServerData.OnTlsRead()
 		ssize_t OnTlsRead(Tls *tls, void *buffer, size_t length);
-		// Tls::Write() -> SSL_write() -> Tls::TlsWrite() -> BIO_get_data()::write_callback -> TlsServerData::OnTlsWrite()
+		// Tls.Write() -> SSL_write() -> Tls::TlsWrite() -> TlsBioCallback.write_callback -> TlsServerData.OnTlsWrite()
 		ssize_t OnTlsWrite(Tls *tls, const void *data, size_t length);
-
+		// OpenSSL -> Tls::() -> Tls::TlsCtrl() -> TlsBioCallback.ctrl_callback -> TlsServerData.OnTlsCtrl()
 		long OnTlsCtrl(ov::Tls *tls, int cmd, long num, void *arg);
 
+	protected:
 		State _state = State::Invalid;
-		Method _method;
+
+		ov::String _server_name;
 
 		Tls _tls;
-		std::mutex _data_mutex;
 		WriteCallback _write_callback;
 
+		std::mutex _cipher_data_mutex;
 		std::shared_ptr<Data> _cipher_data;
+
+		std::mutex _plain_data_mutex;
 		std::shared_ptr<Data> _plain_data;
 	};
 }  // namespace ov

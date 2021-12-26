@@ -2,6 +2,8 @@
 
 #include <base/info/media_extradata.h>
 #include <modules/bitstream/h264/h264_converter.h>
+#include <modules/rtp_rtcp/rtp_header_extension/rtp_header_extension_framemarking.h>
+#include <modules/rtp_rtcp/rtp_header_extension/rtp_header_extension_playout_delay.h>
 
 #include "rtc_application.h"
 #include "rtc_private.h"
@@ -29,6 +31,7 @@ a=sendonly
 a=mid:jyJ5Pe
 a=setup:actpass
 a=rtcp-mux
+a=extmap:1 urn:ietf:params:rtp-hdrext:framemarking
 a=msid:0nm3jPz5YtRJ1NF26G9IKrUCBlWavuwbeiSf 6jHsvxRPcpiEVZbA5QegGowmCtOlh8kTaXJ4
 a=rtpmap:100 H264/90000
 a=fmtp:100 packetization-mode=1;profile-level-id=42e01f;level-asymmetry-allowed=1
@@ -104,6 +107,10 @@ bool RtcStream::Start()
 	_ulpfec_enabled = GetApplicationInfo().GetConfig().GetPublishers().GetWebrtcPublisher().IsUlpfecEnalbed();
 	_jitter_buffer_enabled = GetApplicationInfo().GetConfig().GetPublishers().GetWebrtcPublisher().IsJitterBufferEnabled();
 
+	auto playoutDelay = GetApplicationInfo().GetConfig().GetPublishers().GetWebrtcPublisher().GetPlayoutDelay(&_playout_delay_enabled);
+	_playout_delay_min = playoutDelay.GetMin();
+	_playout_delay_max = playoutDelay.GetMax();
+
 	_offer_sdp = std::make_shared<SessionDescription>();
 	_offer_sdp->SetOrigin("OvenMediaEngine", ov::Random::GenerateUInt32(), 2, "IN", 4, "127.0.0.1");
 	_offer_sdp->SetTiming(0, 0);
@@ -127,7 +134,6 @@ bool RtcStream::Start()
 
 	for (auto &track_item : _tracks)
 	{
-		ov::String codec = "";
 		auto &track = track_item.second;
 
 		switch (track->GetMediaType())
@@ -138,13 +144,13 @@ bool RtcStream::Start()
 				switch (track->GetCodecId())
 				{
 					case MediaCodecId::Vp8:
-						codec = "VP8";
+						payload->SetRtpmap(payload_type_num++, "VP8", 90000);
 						break;
 					case MediaCodecId::H265:
-						codec = "H265";
+						payload->SetRtpmap(payload_type_num++, "H265", 90000);
 						break;
 					case MediaCodecId::H264:
-						codec = "H264";
+						payload->SetRtpmap(payload_type_num++, "H264", 90000);
 
 						{
 							const auto &codec_extradata = track_item.second->GetCodecExtradata();
@@ -214,11 +220,17 @@ bool RtcStream::Start()
 					{
 						video_media_desc->SetRtxSsrc(ov::Random::GenerateUInt32());
 					}
+					video_media_desc->AddExtmap(RTP_HEADER_EXTENSION_FRAMEMARKING_ID, RTP_HEADER_EXTENSION_FRAMEMARKING_ATTRIBUTE);
+
+					// Experimental Code
+					if(_playout_delay_enabled == true)
+					{
+						video_media_desc->AddExtmap(RTP_HEADER_EXTENSION_PLAYOUT_DELAY_ID, RTP_HEADER_EXTENSION_PLAYOUT_DELAY_ATTRIBUTE);
+					}
+
 					_offer_sdp->AddMedia(video_media_desc);
 					first_video_desc = false;
 				}
-
-				payload->SetRtpmap(payload_type_num++, codec, 90000);
 
 				if (_rtx_enabled == true)
 				{
@@ -248,7 +260,8 @@ bool RtcStream::Start()
 				switch (track->GetCodecId())
 				{
 					case MediaCodecId::Opus:
-						codec = "OPUS";
+						payload->SetRtpmap(payload_type_num++, "OPUS", static_cast<uint32_t>(track->GetSample().GetRateNum()),
+								   std::to_string(track->GetChannel().GetCounts()).c_str());
 
 						// Enable inband-fec
 						// a=fmtp:111 maxplaybackrate=16000; useinbandfec=1; maxaveragebitrate=20000
@@ -288,9 +301,6 @@ bool RtcStream::Start()
 					_offer_sdp->AddMedia(audio_media_desc);
 					first_audio_desc = false;
 				}
-
-				payload->SetRtpmap(payload_type_num++, codec, static_cast<uint32_t>(track->GetSample().GetRateNum()),
-								   std::to_string(track->GetChannel().GetCounts()).c_str());
 
 				audio_media_desc->AddPayload(payload);
 				audio_media_desc->Update();
@@ -340,9 +350,15 @@ bool RtcStream::Start()
 		video_media_desc->Update();
 	}
 
-	logtd("Stream is created : %s/%u", GetName().CStr(), GetId());
+	logti("WebRTC Stream has been created : %s/%u\nRtx(%s) Ulpfec(%s) JitterBuffer(%s) PlayoutDelay(%s min:%d max: %d)", 
+									GetName().CStr(), GetId(),
+									ov::Converter::ToString(_rtx_enabled).CStr(),
+									ov::Converter::ToString(_ulpfec_enabled).CStr(),
+									ov::Converter::ToString(_jitter_buffer_enabled).CStr(),
+									ov::Converter::ToString(_playout_delay_enabled).CStr(),
+									_playout_delay_min, _playout_delay_max);
+	
 	_offer_sdp->Update();
-
 	logtd("%s", _offer_sdp->ToString().CStr());
 
 	return Stream::Start();
@@ -361,6 +377,16 @@ bool RtcStream::Stop()
 	_packetizers.clear();
 
 	return Stream::Stop();
+}
+
+
+bool RtcStream::OnStreamUpdated(const std::shared_ptr<info::Stream> &info)
+{
+	SetMsid(info->GetMsid());
+
+	//TODO(Getroot): check if the track has changed and re-create the SDP.
+
+	return Stream::OnStreamUpdated(info);
 }
 
 std::shared_ptr<SessionDescription> RtcStream::GetSessionDescription()
@@ -473,9 +499,11 @@ void RtcStream::PacketizeVideoFrame(const std::shared_ptr<MediaPacket> &media_pa
 	auto frame_type = (media_packet->GetFlag() == MediaPacketFlag::Key) ? FrameType::VideoFrameKey : FrameType::VideoFrameDelta;
 	// video timescale is always 90000hz in WebRTC
 	auto timestamp = ((double)media_packet->GetPts() * media_track->GetTimeBase().GetExpr() * 90000);
-	auto ntp_timestamp = ov::Converter::ToNTPTimestamp((double)media_packet->GetPts() * media_track->GetTimeBase().GetExpr());
+	auto ntp_timestamp = ov::Converter::SecondsToNtpTs((double)media_packet->GetPts() * media_track->GetTimeBase().GetExpr());
 	auto data = media_packet->GetData();
 	auto fragmentation = media_packet->GetFragHeader();
+
+	
 
 	packetizer->Packetize(frame_type,
 						  timestamp,
@@ -499,7 +527,7 @@ void RtcStream::PacketizeAudioFrame(const std::shared_ptr<MediaPacket> &media_pa
 
 	auto frame_type = (media_packet->GetFlag() == MediaPacketFlag::Key) ? FrameType::AudioFrameKey : FrameType::AudioFrameDelta;
 	auto timestamp = media_packet->GetPts();
-	auto ntp_timestamp = ov::Converter::ToNTPTimestamp((double)media_packet->GetPts() * media_track->GetTimeBase().GetExpr());
+	auto ntp_timestamp = ov::Converter::SecondsToNtpTs((double)media_packet->GetPts() * media_track->GetTimeBase().GetExpr());
 	auto data = media_packet->GetData();
 	auto fragmentation = media_packet->GetFragHeader();
 
@@ -575,6 +603,12 @@ void RtcStream::AddPacketizer(cmn::MediaCodecId codec_id, uint32_t id, uint8_t p
 			if (_ulpfec_enabled == true)
 			{
 				packetizer->SetUlpfec(static_cast<uint8_t>(FixedRtcPayloadType::RED_PAYLOAD_TYPE), static_cast<uint8_t>(FixedRtcPayloadType::ULPFEC_PAYLOAD_TYPE));
+			}
+
+			// Experimental : PlayoutDelay extension
+			if(_playout_delay_enabled == true)
+			{
+				packetizer->SetPlayoutDelay(_playout_delay_min, _playout_delay_max);
 			}
 			break;
 		}

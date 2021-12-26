@@ -8,39 +8,25 @@
 //==============================================================================
 #include "tls_client_data.h"
 
-#define OV_LOG_TAG "TLS"
+#include "./openssl_private.h"
 
 namespace ov
 {
-	TlsClientData::TlsClientData(Method method)
+	TlsClientData::TlsClientData(const std::shared_ptr<TlsContext> &tls_context, bool is_nonblocking)
 	{
-		TlsCallback callback =
+		TlsBioCallback callback =
 			{
-				.create_callback = [](Tls *tls, SSL_CTX *context) -> bool {
-					return true;
-				},
-
 				.read_callback = std::bind(&TlsClientData::OnTlsRead, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
 				.write_callback = std::bind(&TlsClientData::OnTlsWrite, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
 				.destroy_callback = nullptr,
-				.ctrl_callback = std::bind(&TlsClientData::OnTlsCtrl, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4),
-				.verify_callback = nullptr};
+				.ctrl_callback = std::bind(&TlsClientData::OnTlsCtrl, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)};
 
-		const SSL_METHOD *tls_method = nullptr;
 		std::shared_ptr<Error> error;
-
-		switch (method)
-		{
-			case Method::Tls:
-				tls_method = TLS_client_method();
-				break;
-		}
 
 		if (error == nullptr)
 		{
-			if (_tls.InitializeClientTls(tls_method, callback))
+			if (_tls.Initialize(tls_context, callback, is_nonblocking))
 			{
-				_method = method;
 				_state = State::WaitingForConnect;
 			}
 			else
@@ -81,15 +67,22 @@ namespace ov
 		return error;
 	}
 
-	std::shared_ptr<const Data> TlsClientData::Decrypt()
+	bool TlsClientData::Decrypt(std::shared_ptr<const Data> *plain_data)
 	{
 		if (_state == State::Invalid)
 		{
 			logtd("Invalid state");
-			return nullptr;
+			return false;
 		}
 
-		return _tls.Read();
+		auto data = _tls.Read();
+
+		if (plain_data != nullptr)
+		{
+			*plain_data = data;
+		}
+
+		return true;
 	}
 
 	bool TlsClientData::Encrypt(const std::shared_ptr<const Data> &plain_data)
@@ -101,7 +94,7 @@ namespace ov
 			return false;
 		}
 
-		logtd("Trying to encrypt the data for TLS\n%s", plain_data->Dump(32).CStr());
+		logtp("Trying to encrypt the data for TLS\n%s", plain_data->Dump(32).CStr());
 
 		size_t written_bytes = 0;
 
@@ -116,7 +109,7 @@ namespace ov
 
 	ssize_t TlsClientData::OnTlsRead(Tls *tls, void *buffer, size_t length)
 	{
-		logtd("Trying to read %zu bytes from I/O callback...", length);
+		logtp("Trying to read %zu bytes from I/O callback...", length);
 
 		if (_io_callback != nullptr)
 		{
@@ -128,7 +121,7 @@ namespace ov
 
 	ssize_t TlsClientData::OnTlsWrite(Tls *tls, const void *data, size_t length)
 	{
-		logtd("Trying to send encrypted data to I/O callback\n%s", ov::Dump(data, length, 32).CStr());
+		logtp("Trying to send encrypted data to I/O callback\n%s", ov::Dump(data, length, 32).CStr());
 
 		if (_io_callback != nullptr)
 		{
@@ -140,7 +133,7 @@ namespace ov
 
 	long TlsClientData::OnTlsCtrl(Tls *tls, int cmd, long num, void *arg)
 	{
-		logtd("[TLS] Ctrl: %d, %ld, %p", cmd, num, arg);
+		logtp("[TLS] Ctrl: %d, %ld, %p", cmd, num, arg);
 
 		switch (cmd)
 		{

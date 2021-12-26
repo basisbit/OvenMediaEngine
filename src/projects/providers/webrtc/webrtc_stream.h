@@ -66,9 +66,6 @@ namespace pvd
 		bool AddDepacketizer(uint8_t payload_type, RtpDepacketizingManager::SupportedDepacketizerType codec_id);
 		std::shared_ptr<RtpDepacketizingManager> GetDepacketizer(uint8_t payload_type);
 
-		uint64_t AdjustTimestamp(uint8_t payload_type, uint32_t timestamp);
-		uint64_t GetTimestampDelta(uint8_t payload_type, uint32_t timestamp);
-
 		ov::StopWatch _fir_timer;
 
 		std::shared_ptr<const SessionDescription> _offer_sdp;
@@ -80,27 +77,12 @@ namespace pvd
 		std::shared_ptr<SrtpTransport>      _srtp_transport;
 		std::shared_ptr<DtlsTransport>      _dtls_transport;
 
-		uint32_t							_local_ssrc = 0;
-
-		uint8_t 							_red_block_pt = 0;
-		uint8_t                             _video_payload_type = 0;
-		uint32_t							_video_ssrc = 0;
-		uint32_t							_video_rtx_ssrc = 0;
-		uint8_t                             _audio_payload_type = 0;
-		uint32_t							_audio_ssrc = 0;
 		bool								_rtx_enabled = false;
-		uint16_t							_rtx_sequence_number = 1;
-		uint64_t							_session_expired_time = 0;
-
-		// Payload type : Timestamp
-		std::map<uint8_t, uint32_t>			_last_timestamp_map;
-		std::map<uint8_t, uint32_t>			_timestamp_map;
-
 		std::shared_mutex					_start_stop_lock;
 
 		// Payload type, Depacketizer
 		std::map<uint8_t, std::shared_ptr<RtpDepacketizingManager>> _depacketizers;
 
-		std::shared_ptr<LipSyncClock> _lip_sync_clock;
+		LipSyncClock 						_lip_sync_clock;
 	};
 }

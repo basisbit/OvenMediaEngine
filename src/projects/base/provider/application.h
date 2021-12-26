@@ -13,7 +13,7 @@
 #include "base/common_types.h"
 #include "base/ovlibrary/ovlibrary.h"
 
-#include "base/mediarouter/media_route_application_connector.h"
+#include "base/mediarouter/mediarouter_application_connector.h"
 #include "stream.h"
 
 #include <shared_mutex>
@@ -62,6 +62,7 @@ namespace pvd
 		virtual ~Application() override;
 	
 		virtual bool NotifyStreamCreated(const std::shared_ptr<Stream> &stream);
+		virtual bool NotifyStreamUpdated(const std::shared_ptr<info::Stream> &stream);
 		virtual bool NotifyStreamDeleted(const std::shared_ptr<Stream> &stream);
 
 		std::shared_mutex _streams_guard;

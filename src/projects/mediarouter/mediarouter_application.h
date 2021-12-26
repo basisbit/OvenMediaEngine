@@ -15,10 +15,10 @@
 #include <memory>
 #include <vector>
 
-#include "base/mediarouter/media_route_application_connector.h"
-#include "base/mediarouter/media_route_application_interface.h"
-#include "base/mediarouter/media_route_application_observer.h"
-#include "base/mediarouter/media_route_interface.h"
+#include "base/mediarouter/mediarouter_application_connector.h"
+#include "base/mediarouter/mediarouter_application_interface.h"
+#include "base/mediarouter/mediarouter_application_observer.h"
+#include "base/mediarouter/mediarouter_interface.h"
 #include "mediarouter_stream.h"
 
 class ApplicationInfo;
@@ -73,6 +73,10 @@ public:
 		const std::shared_ptr<MediaRouteApplicationConnector> &app_conn,
 		const std::shared_ptr<info::Stream> &stream) override;
 
+	bool OnStreamUpdated(
+		const std::shared_ptr<MediaRouteApplicationConnector> &app_conn,
+		const std::shared_ptr<info::Stream> &stream) override;
+
 	bool OnPacketReceived(
 		const std::shared_ptr<MediaRouteApplicationConnector> &app_conn,
 		const std::shared_ptr<info::Stream> &stream,
@@ -86,9 +90,14 @@ public:
 		const std::shared_ptr<info::Stream> &stream_info,
 		MediaRouteApplicationConnector::ConnectorType connector_type);
 
-	bool NotifyStreamPrepared(std::shared_ptr<MediaRouteStream> &stream);
+	bool NotifyStreamPrepared(
+		std::shared_ptr<MediaRouteStream> &stream);
 	
-	bool NotifyStreamDelete(
+	bool NotifyStreamDeleted(
+		const std::shared_ptr<info::Stream> &stream_info,
+		const MediaRouteApplicationConnector::ConnectorType connector_type);
+
+	bool NotifyStreamUpdated(
 		const std::shared_ptr<info::Stream> &stream_info,
 		const MediaRouteApplicationConnector::ConnectorType connector_type);
 
@@ -128,6 +137,7 @@ private:
 	std::shared_mutex _streams_lock;
 
 private:
+	uint32_t GetWorkerIDByStreamID(info::stream_id_t stream_id);
 	void InboundWorkerThread(uint32_t worker_id);
 	void OutboundWorkerThread(uint32_t worker_id);
 

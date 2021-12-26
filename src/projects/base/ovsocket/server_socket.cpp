@@ -90,7 +90,7 @@ namespace ov
 				return;
 			}
 
-			logad("Trying to allocate a socket for client: %s", address.ToString().CStr());
+			logad("Trying to allocate a socket for client: %s", address.ToString(false).CStr());
 
 			auto client = _pool->AllocSocket<ClientSocket>(GetSharedPtrAs<ServerSocket>(), client_socket, address);
 
@@ -181,7 +181,7 @@ namespace ov
 				result &= SetSockOpt<int>(SO_REUSEADDR, 1);
 
 				// Disable Nagle's algorithm
-				// result &= SetSockOpt<int>(IPPROTO_TCP, TCP_NODELAY, 1);
+				result &= SetSockOpt<int>(IPPROTO_TCP, TCP_NODELAY, 1);
 
 				// Set send buffer size if smaller than argument (0 == default)
 				int current_send_buffer_size = 0;

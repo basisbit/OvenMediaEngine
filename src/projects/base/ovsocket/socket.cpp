@@ -243,7 +243,7 @@ namespace ov
 			}
 
 			case SocketType::Srt:
-				if (SetSockOpt(SRTO_RCVSYN, mode != BlockingMode::Blocking) == false || SetSockOpt(SRTO_SNDSYN, mode != BlockingMode::Blocking) == false)
+				if (SetSockOpt(SRTO_RCVSYN, mode == BlockingMode::Blocking) == false || SetSockOpt(SRTO_SNDSYN, mode == BlockingMode::Blocking) == false)
 				{
 					logae("Could not set flags to SRT socket %d: %s", GetNativeHandle(), SrtError::CreateErrorFromSrt()->ToString().CStr());
 					return false;
@@ -714,7 +714,7 @@ namespace ov
 
 	String Socket::GetRemoteAddressAsUrl() const
 	{
-		return String::FormatString("%s://%s", StringFromSocketType(GetType()), GetRemoteAddress() != nullptr ? GetRemoteAddress()->ToString().CStr() : "unknown");
+		return String::FormatString("%s://%s", StringFromSocketType(GetType()), GetRemoteAddress() != nullptr ? GetRemoteAddress()->ToString(false).CStr() : "unknown");
 	}
 
 	bool Socket::SetSockOpt(int proto, int option, const void *value, socklen_t value_length)
@@ -875,8 +875,6 @@ namespace ov
 
 				if (result == false)
 				{
-					OV_ASSERT2(false);
-					logae("Could not delete from epoll");
 					SetState(SocketState::Error);
 					return DispatchResult::Error;
 				}
@@ -1172,7 +1170,7 @@ namespace ov
 		size_t remained = data->GetLength();
 		size_t total_sent = 0L;
 
-		logap("Trying to send data %zu bytes to %s...", remained, address.ToString().CStr());
+		logap("Trying to send data %zu bytes to %s...", remained, address.ToString(false).CStr());
 
 		switch (GetType())
 		{
@@ -1731,7 +1729,7 @@ namespace ov
 	{
 		CHECK_STATE(>= SocketState::Closed, false);
 
-		logad("Closing %s...", GetRemoteAddress() != nullptr ? GetRemoteAddress()->ToString().CStr() : GetStreamId().CStr());
+		logad("Closing %s...", GetRemoteAddress() != nullptr ? GetRemoteAddress()->ToString(false).CStr() : GetStreamId().CStr());
 
 		if (GetState() == SocketState::Closed)
 		{
@@ -1979,6 +1977,15 @@ namespace ov
 
 	String Socket::ToString(const char *class_name) const
 	{
+		ov::String caller(class_name);
+		bool ignore_privacy_protection = true;
+
+		// ClientSocket must follow privacy rule
+		if(caller == "ClientSocket")
+		{
+			ignore_privacy_protection = false;
+		}
+
 		return String::FormatString(
 			"<%s: %p, #%d, %s, %s, %s%s%s>",
 			class_name, this,
@@ -1986,7 +1993,7 @@ namespace ov
 			StringFromSocketType(GetType()),
 			StringFromBlockingMode(_blocking_mode),
 			(_remote_address != nullptr) ? ", " : "",
-			(_remote_address != nullptr) ? _remote_address->ToString().CStr() : "");
+			(_remote_address != nullptr) ? _remote_address->ToString(ignore_privacy_protection).CStr() : "");
 	}
 
 	String Socket::ToString() const

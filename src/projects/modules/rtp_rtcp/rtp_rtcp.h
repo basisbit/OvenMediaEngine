@@ -28,11 +28,12 @@ public:
 	~RtpRtcp() override;
 
 	bool AddRtpSender(uint8_t payload_type, uint32_t ssrc, uint32_t codec_rate, ov::String cname);
-	bool AddRtpReceiver(uint8_t payload_type, const std::shared_ptr<MediaTrack> &track);
+	bool AddRtpReceiver(uint32_t track_id, const std::shared_ptr<MediaTrack> &track);
 	bool Stop() override;
 
 	bool SendRtpPacket(const std::shared_ptr<RtpPacket> &packet);
-	bool SendFir(uint32_t media_ssrc);
+	bool SendPLI(uint32_t media_ssrc);
+	bool SendFIR(uint32_t media_ssrc);
 
 	uint8_t GetReceivedPayloadType(uint32_t ssrc);
 
@@ -46,8 +47,8 @@ public:
 	bool OnDataReceivedFromNextNode(NodeType from_node, const std::shared_ptr<const ov::Data> &data) override;
 	
 private:
-	bool OnRtpReceived(const std::shared_ptr<const ov::Data> &data);
-	bool OnRtcpReceived(const std::shared_ptr<const ov::Data> &data);
+	bool OnRtpReceived(NodeType from_node, const std::shared_ptr<const ov::Data> &data);
+	bool OnRtcpReceived(NodeType from_node, const std::shared_ptr<const ov::Data> &data);
 
 	std::shared_ptr<RtpFrameJitterBuffer> GetJitterBuffer(uint8_t payload_type);
 
