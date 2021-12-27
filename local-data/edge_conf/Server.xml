@@ -130,8 +130,8 @@
 						</OutputProfile>
 					</OutputProfiles>
 					<Publishers>
-						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:4}</SessionLoadBalancingThreadCount>
-						<StreamLoadBalancingThreadCount>2</StreamLoadBalancingThreadCount>
+						<StreamWorkerCount>${env:CPU_CORES_COUNT:4}</StreamWorkerCount>
+						<AppWorkerCount>2</AppWorkerCount>
 						<HLS>
 							<SegmentDuration>6</SegmentDuration>
 							<SegmentCount>3</SegmentCount>
