@@ -92,8 +92,8 @@
 						</OutputProfile>
 					</OutputProfiles>
 					<Publishers>
-						<SessionLoadBalancingThreadCount>${env:CPU_CORES_COUNT:2}</SessionLoadBalancingThreadCount>
-						<StreamLoadBalancingThreadCount>${env:CPU_CORES_COUNT:2}</StreamLoadBalancingThreadCount>
+						<StreamWorkerCount>${env:CPU_CORES_COUNT:2}</StreamWorkerCount>
+						<AppWorkerCount>${env:CPU_CORES_COUNT:2}</AppWorkerCount>
 						<OVT />
 					</Publishers>
 				</Application>
