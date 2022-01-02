@@ -88,6 +88,12 @@
 								<Video>
 									<Bypass>true</Bypass>
 								</Video>
+								<Audio>
+									<Codec>opus</Codec>
+									<Bitrate>192000</Bitrate>
+									<Samplerate>48000</Samplerate>
+									<Channel>2</Channel>
+								</Audio>
 							</Encodes>
 						</OutputProfile>
 					</OutputProfiles>
