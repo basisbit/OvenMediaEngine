@@ -53,3 +53,4 @@ services:
     volumes:
     - ./local-data/edge_conf:/opt/ovenmediaengine/bin/edge_conf
     - ./local-data/tls:/etc/ssl
+    stop_signal: KILL
