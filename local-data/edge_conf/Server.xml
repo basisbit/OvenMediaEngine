@@ -99,11 +99,29 @@
 					</Pass>
 				</Origin>
 				<Origin>
-					<Location>/horse/</Location>
+					<Location>/360out/</Location>
 					<Pass>
 						<Scheme>OVT</Scheme>
 						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER_USA:}:${env:OVT_ORIGIN_PORT:9000}/source/</Url>
+							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/360out/</Url>
+						</Urls>
+					</Pass>
+				</Origin>
+				<Origin>
+					<Location>/720out/</Location>
+					<Pass>
+						<Scheme>OVT</Scheme>
+						<Urls>
+							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/720out/</Url>
+						</Urls>
+					</Pass>
+				</Origin>
+				<Origin>
+					<Location>/1080out/</Location>
+					<Pass>
+						<Scheme>OVT</Scheme>
+						<Urls>
+							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/1080out/</Url>
 						</Urls>
 					</Pass>
 				</Origin>
