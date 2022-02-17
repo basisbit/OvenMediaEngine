@@ -96,6 +96,54 @@
 								</Audio>
 							</Encodes>
 						</OutputProfile>
+						<OutputProfile>
+							<Name>ingame-360p</Name>
+							<OutputStreamName>${OriginStreamName}-360p</OutputStreamName>
+							<Encodes>
+								<Audio>
+									<Bypass>true</Bypass>
+								</Audio>
+								<Video>
+									<Bypass>false</Bypass>
+									<Codec>h264</Codec>
+									<Width>640</Width>
+									<Height>360</Height>
+									<Bitrate>1100000</Bitrate>
+									<Framerate>30.0</Framerate>
+									<Preset>faster</Preset>
+								</Video>
+								<Audio>
+									<Codec>opus</Codec>
+									<Bitrate>192000</Bitrate>
+									<Samplerate>48000</Samplerate>
+									<Channel>2</Channel>
+								</Audio>
+							</Encodes>
+						</OutputProfile>
+						<OutputProfile>
+							<Name>ingame</Name>
+							<OutputStreamName>${OriginStreamName}-216p</OutputStreamName>
+							<Encodes>
+								<Audio>
+									<Bypass>true</Bypass>
+								</Audio>
+								<Video>
+									<Bypass>false</Bypass>
+									<Codec>h264</Codec>
+									<Width>384</Width>
+									<Height>216</Height>
+									<Bitrate>800000</Bitrate>
+									<Framerate>30.0</Framerate>
+									<Preset>faster</Preset>
+								</Video>
+								<Audio>
+									<Codec>opus</Codec>
+									<Bitrate>192000</Bitrate>
+									<Samplerate>48000</Samplerate>
+									<Channel>2</Channel>
+								</Audio>
+							</Encodes>
+						</OutputProfile>
 					</OutputProfiles>
 					<Publishers>
 						<StreamWorkerCount>${env:CPU_CORES_COUNT:2}</StreamWorkerCount>

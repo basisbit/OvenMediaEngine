@@ -94,7 +94,7 @@
 					<Pass>
 						<Scheme>OVT</Scheme>
 						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/360out/</Url>
+							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/source/</Url>
 						</Urls>
 					</Pass>
 				</Origin>
