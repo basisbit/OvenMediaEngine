@@ -143,6 +143,45 @@
 					</Publishers>
 				</Application>
 				<Application>
+					<Name>216out</Name>
+					<Type>live</Type>
+					<Providers>
+						<RTMP />
+						<SRT />
+					</Providers>
+					<OutputProfiles>
+						<OutputProfile>
+							<Name>ingame</Name>
+							<OutputStreamName>${OriginStreamName}</OutputStreamName>
+							<Encodes>
+								<Audio>
+									<Bypass>true</Bypass>
+								</Audio>
+								<Video>
+									<Bypass>false</Bypass>
+									<Codec>h264</Codec>
+									<Width>384</Width>
+									<Height>216</Height>
+									<Bitrate>800000</Bitrate>
+									<Framerate>30.0</Framerate>
+									<Preset>faster</Preset>
+								</Video>
+								<Audio>
+									<Codec>opus</Codec>
+									<Bitrate>192000</Bitrate>
+									<Samplerate>48000</Samplerate>
+									<Channel>2</Channel>
+								</Audio>
+							</Encodes>
+						</OutputProfile>
+					</OutputProfiles>
+					<Publishers>
+						<StreamWorkerCount>${env:CPU_CORES_COUNT:2}</StreamWorkerCount>
+						<AppWorkerCount>${env:CPU_CORES_COUNT:2}</AppWorkerCount>
+						<OVT />
+					</Publishers>
+				</Application>
+				<Application>
 					<Name>720out</Name>
 					<Type>live</Type>
 					<Providers>

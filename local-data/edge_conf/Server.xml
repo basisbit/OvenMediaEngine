@@ -108,6 +108,15 @@
 					</Pass>
 				</Origin>
 				<Origin>
+					<Location>/216out/</Location>
+					<Pass>
+						<Scheme>OVT</Scheme>
+						<Urls>
+							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/216out/</Url>
+						</Urls>
+					</Pass>
+				</Origin>
+				<Origin>
 					<Location>/720out/</Location>
 					<Pass>
 						<Scheme>OVT</Scheme>
