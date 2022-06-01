@@ -5,6 +5,7 @@ services:
 #    build:
 #      context: .
 #      dockerfile: ./Dockerfile
+#    image: ome_edge_image:latest
 #    restart: always
 #    ports:
 #    - "1935:1935/tcp"

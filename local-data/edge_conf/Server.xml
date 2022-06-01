@@ -76,7 +76,7 @@
 			<Origins>
 				<Properties>
 					<NoInputFailoverTimeout>3000</NoInputFailoverTimeout>
-					<UnusedStreamDeletionTimeout>15000</UnusedStreamDeletionTimeout>
+					<UnusedStreamDeletionTimeout>30000</UnusedStreamDeletionTimeout>
 				</Properties>
 				<!--
 					<Origin>
@@ -95,42 +95,6 @@
 						<Scheme>OVT</Scheme>
 						<Urls>
 							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/source/</Url>
-						</Urls>
-					</Pass>
-				</Origin>
-				<Origin>
-					<Location>/360out/</Location>
-					<Pass>
-						<Scheme>OVT</Scheme>
-						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/360out/</Url>
-						</Urls>
-					</Pass>
-				</Origin>
-				<Origin>
-					<Location>/216out/</Location>
-					<Pass>
-						<Scheme>OVT</Scheme>
-						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/216out/</Url>
-						</Urls>
-					</Pass>
-				</Origin>
-				<Origin>
-					<Location>/720out/</Location>
-					<Pass>
-						<Scheme>OVT</Scheme>
-						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/720out/</Url>
-						</Urls>
-					</Pass>
-				</Origin>
-				<Origin>
-					<Location>/1080out/</Location>
-					<Pass>
-						<Scheme>OVT</Scheme>
-						<Urls>
-							<Url>${env:OVT_ORIGIN_SERVER_EU:}:${env:OVT_ORIGIN_PORT:9000}/1080out/</Url>
 						</Urls>
 					</Pass>
 				</Origin>
