@@ -146,7 +146,7 @@
 						</OutputProfile>
 						<OutputProfile>
 							<Name>ingame</Name>
-							<OutputStreamName>${OriginStreamName}-1080p</OutputStreamName>
+							<OutputStreamName>${OriginStreamName}-smol</OutputStreamName>
 							<Encodes>
 								<Audio>
 									<Bypass>true</Bypass>
@@ -154,15 +154,15 @@
 								<Video>
 									<Bypass>false</Bypass>
 									<Codec>h264</Codec>
-									<Width>1920</Width>
-									<Height>1080</Height>
-									<Bitrate>6000000</Bitrate>
+									<Width>384</Width>
+									<Height>216</Height>
+									<Bitrate>400000</Bitrate>
 									<Framerate>30.0</Framerate>
 									<Preset>faster</Preset>
 								</Video>
 								<Audio>
 									<Codec>opus</Codec>
-									<Bitrate>256000</Bitrate>
+									<Bitrate>128000</Bitrate>
 									<Samplerate>48000</Samplerate>
 									<Channel>2</Channel>
 								</Audio>
